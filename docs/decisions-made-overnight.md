@@ -46,3 +46,44 @@ file is where they are amended.
 - **`aspire new` must be run with `--suppress-agent-init`.** Without it, it writes a `PostToolUse`
   hook into the user's global `~/.claude/settings.json` and installs scripts in `~/.aspire/hooks`.
   Task 00 hit this and reverted both.
+
+## Task 01 — monorepo foundation
+
+- **`@eslint/js` is catalogued as `^10.0.1`, not `10.11.0`.** It is the one catalog entry that is
+  a range: `@eslint/js` releases behind `eslint` itself, and `10.11.0` does not exist. It was
+  added to the catalog at all because the flat config imports `js.configs.recommended`.
+- **`tsx` is a root devDependency.** Every app will declare it too, but having it at the root is
+  what let task 01 prove at runtime that `exports: "./src/index.ts"` resolves across packages.
+- **Error codes live in `@mercatus/core` as `ERROR_CODES`; `@mercatus/contracts` derives
+  `errorCodeSchema` from it.** BUILD-PLAN §6.0 puts the enum in `contracts/errors.ts`, and it is
+  there — but derived, not retyped, because the classes that throw the codes are in core and two
+  hand-maintained lists drift. `contracts` therefore depends on `core`; there is no cycle.
+- **`MercatusError` carries a `logDetail` that `toEnvelope()` never serialises.** That is how S1
+  is made mechanical: the generic code goes on the wire, the real reason goes in the log, and you
+  cannot leak the second by forgetting.
+- **The paged-result type is `PagedResult<T> = { items, total }`, and `normalisePageRequest`
+  clamps rather than rejects** (default 50, max 200). A client asking for 10 000 rows is being
+  optimistic, not hostile, and a 400 there buys nothing.
+- **The stub token's audience claim is the type split.** `aud` is `staff` | `shopper` | `refresh`;
+  `tid` (a tenant uuid) and `roles` appear on staff tokens only; a `shopper` token carrying `tid`
+  is rejected by `verify()`. BH1 and BI2 are then properties of the token, not of a code path.
+  Access tokens 900s (architecture.md §4's 15 minutes), refresh 86400s.
+- **`AUTH_STUB_SECRET` must be at least 32 characters**, and the adapter throws at construction if
+  it is not. jose refuses a sub-256-bit HS256 key, and boot is a better place to learn that than
+  the first login.
+- **`StubAuthAdapter` takes an optional `resolveTenantId(slug)` hook.** Without it, a stub
+  authorization code must carry a tenant **uuid**; with it, a slug works. The stub cannot know the
+  `tenants` table, and hard-coding a fake uuid per slug would put a lie in the auth path.
+- **ESLint runs without type information** (`tseslint.configs.recommended`, not
+  `recommendedTypeChecked`). The whole gate is under two seconds as a result. Revisit if a rule we
+  actually want needs types; `--max-warnings 0` is already wired, which is the G1 half that
+  matters.
+- **`noUncheckedIndexedAccess` is on, `exactOptionalPropertyTypes` is off.** The first catches a
+  real class of bug for the cost of a few guards; the second mostly generates ceremony around
+  optional fields in a POC.
+- **No package has a `build` script.** Packages export TypeScript source and are consumed by
+  `tsx` / Vite / Next directly; only the three Fastify apps will produce a `dist/`, and only for
+  their Dockerfiles. `turbo run build` exists and currently matches nothing.
+- **`pnpm-workspace.yaml` carries `onlyBuiltDependencies: [esbuild]`** so `pnpm install` does not
+  die on vitest's transitive build script, and a pnpm-written `minimumReleaseAgeExclude` block
+  which is left alone.
