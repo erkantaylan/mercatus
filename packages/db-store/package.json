@@ -9,11 +9,23 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "lint": "eslint . --max-warnings 0"
+    "lint": "eslint . --max-warnings 0",
+    "test": "vitest run",
+    "generate": "drizzle-kit generate",
+    "migrate": "tsx src/migrate.ts",
+    "seed": "tsx src/seed.ts"
+  },
+  "dependencies": {
+    "@mercatus/core": "workspace:*",
+    "drizzle-orm": "catalog:",
+    "postgres": "catalog:"
   },
   "devDependencies": {
     "@types/node": "catalog:",
+    "drizzle-kit": "catalog:",
     "eslint": "catalog:",
-    "typescript": "catalog:"
+    "tsx": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
   }
 }

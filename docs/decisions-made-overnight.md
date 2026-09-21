@@ -87,3 +87,48 @@ file is where they are amended.
 - **`pnpm-workspace.yaml` carries `onlyBuiltDependencies: [esbuild]`** so `pnpm install` does not
   die on vitest's transitive build script, and a pnpm-written `minimumReleaseAgeExclude` block
   which is left alone.
+
+## Task 02 — schemas, RLS and contracts
+
+- **`DATABASE_SUPERUSER_URL` is added to the §8.2 environment contract.** Creating a role needs a
+  connection that can create roles, and `DATABASE_ADMIN_URL` is `mercatus_owner`, which is
+  deliberately `nocreaterole`. It defaults to `DATABASE_ADMIN_URL` when unset, so an Aspire-
+  provisioned Postgres — where the admin connection *is* the superuser — needs no extra wiring.
+- **`sql/02-rls.sql` is hand-authored rather than expressed with Drizzle's `pgPolicy`.**
+  BUILD-PLAN §5.3 allows either. The grants have to live next to the policies to be reviewable in
+  one place, `pgPolicy` cannot express them, and J1 forbids hand-editing a generated migration —
+  so keeping `migrations/` generated and this file owned is the only arrangement where both halves
+  are readable.
+- **The control plane gets its own two roles, `mercatus_platform_owner` and
+  `mercatus_platform_app`,** rather than reusing the data plane's. Roles are cluster-wide, so
+  reusing `mercatus_app` would give a store process credentials that work against the control
+  plane's database. `00-roles.sql` also revokes `connect` on the platform database from `public`,
+  which makes CO3's boundary true at the database as well as in the Aspire model.
+- **Role passwords are literals in `sql/00-roles.sql`** (`mercatus_owner_dev`, `mercatus_app_dev`,
+  `mercatus_platform_owner_dev`, `mercatus_platform_app_dev`). Templating them would need a
+  substitution step in the migrate script for a database that only ever exists on a laptop.
+- **`order_counters` rows are created when a tenant is mirrored, not lazily at first checkout.**
+  `takeOrderNumber` therefore treats zero rows as a bug and throws, per §5.2 — a lazy insert would
+  make "no tenant context" indistinguishable from "first order ever", which is the one distinction
+  that matters there.
+- **`placeOrder` decrements stock with a conditional `update … where id = ? and stock >= qty`**
+  rather than read-then-write. Two shoppers racing for the last unit both read 1; exactly one
+  matches zero rows and gets the 409.
+- **`products` carries `check (price_minor >= 0)` and `check (stock >= 0)`; `order_lines` carries
+  `check (qty > 0)`.** Only the last is in BUILD-PLAN §5.2. Negative money and negative stock are
+  the two states no code path should be able to reach, and a check constraint is cheaper than the
+  test that would otherwise have to prove it.
+- **Foreign keys are simple (`order_lines.product_id -> products.id`), not composite on
+  `(tenant_id, id)`.** Postgres checks an FK as the table owner, so RLS does not constrain the
+  reference itself — but the referencing *row* still has to satisfy its own `with check`, so no
+  cross-tenant row can be created, and reading the referenced row still goes through that table's
+  policy. Composite FKs would close a data-integrity gap, not a leak. Noted rather than built.
+- **`ProductNotFoundError` and `OrderNotFoundError` added to `@mercatus/core`.** Both codes were
+  already in `ERROR_CODES` with no class able to throw them.
+- **`@mercatus/contracts` splits into `common.ts` / `store.ts` / `platform.ts`** beside the
+  existing `errors.ts`, and PATCH bodies are `.partial().strict()` so an unknown key is a 400
+  rather than a 200 that changed nothing.
+- **Both db packages have a `test` script, and the leak suite skips loudly when no database URL is
+  set.** Two of the four db-store suites need a live Postgres; the other two parse the migrations
+  and grep the source, so `pnpm -r test` without a database still enforces "every new table has a
+  policy" and "no application query filters by tenant".

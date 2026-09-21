@@ -1,7 +1,10 @@
 /**
- * @mercatus/db-platform -- control-plane schema: users, tenants, memberships, licences, installations, payments (BUILD-PLAN §5.1, task 07).
+ * @mercatus/db-platform -- the control plane's schema: users, tenants, memberships, licences,
+ * installations and payments (BUILD-PLAN §5.1).
  *
- * Deliberately empty: the package exists now so the workspace wiring, tsconfig and lint config
- * are proven before anyone writes a line of it.
+ * No RLS: one database, one tenant, which is us. Tenant ids are minted here and mirrored into
+ * every data plane (BV1).
  */
-export {};
+export * from './schema.js';
+export * from './client.js';
+export { SEED_TENANT_IDS, SEED_USER, seed } from './seed.js';

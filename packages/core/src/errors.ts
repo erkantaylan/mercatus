@@ -167,6 +167,20 @@ export class ControlPlaneUnreachableError extends MercatusError {
   }
 }
 
+/** 404. The product does not exist -- or belongs to another tenant, which RLS makes the same thing. */
+export class ProductNotFoundError extends MercatusError {
+  constructor(message = 'No such product.', options?: MercatusErrorOptions) {
+    super('PRODUCT_NOT_FOUND', 404, message, options);
+  }
+}
+
+/** 404, never 403, for someone else's order. A 403 confirms the order exists (S1). */
+export class OrderNotFoundError extends MercatusError {
+  constructor(message = 'No such order.', options?: MercatusErrorOptions) {
+    super('ORDER_NOT_FOUND', 404, message, options);
+  }
+}
+
 export class InsufficientStockError extends MercatusError {
   constructor(message = 'Not enough stock.', options?: MercatusErrorOptions) {
     super('INSUFFICIENT_STOCK', 409, message, options);
