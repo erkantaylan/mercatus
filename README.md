@@ -7,7 +7,7 @@ nothing is committed to, and no code exists yet.
 
 | In | Out |
 |---|---|
-| **Identity** API | Vpn API |
+| **Identity** — a configured Logto container, not code we write (`CD1`) | Vpn API |
 | **Store** API | Payment API |
 | **Admin panel** (portal subset) | Medicine API |
 | **Storefront** (existing Next.js) | DownloadHelper API |
@@ -15,6 +15,21 @@ nothing is committed to, and no code exists yet.
 | | Hangfire |
 
 Four deployables, two databases. Everything below is scoped to that.
+
+> **Status, 2026-09-22.** The direction has moved on from this document. **Q5** is answered — the
+> dropped services go away entirely, there are no surviving .NET consumers — so this is no longer
+> a scoped *port* but a **greenfield, multi-tenant POC influenced by Mercury**, with a control
+> plane / data plane split and BYOC as a tier. What that means in practice:
+>
+> - **`apps/identity` does not exist.** Identity is a configured Logto container (`CZ`), so the
+>   `jti` contract, the internal-key scheme and the claim shapes are free — nothing downstream
+>   pins them any more.
+> - **Q8 is resolved** — see the open questions below.
+> - Current design lives in [`docs/architecture.md`](./docs/architecture.md) (service graphs) and
+>   [`docs/dos-and-donts.md`](./docs/dos-and-donts.md) (rules).
+>
+> Sections below still hold wherever they describe the *stack* — Fastify, Drizzle, Aspire,
+> TanStack, testing, CI. Treat the Store/Identity **porting** framing as superseded.
 
 ---
 
@@ -133,20 +148,23 @@ affected-only builds.
 
 ```
 apps/
-  identity       # Fastify
-  store          # Fastify — the project
-  admin          # TanStack Start, ~93 pages
-  storefront     # existing Next.js, moved in
+  platform       # Fastify — control plane: tenants, licences, telemetry ingest
+  store          # Fastify — the data plane API, one image, two modes
+  admin          # TanStack Start — platform console
+  dashboard      # TanStack Start — merchant dashboard
+  storefront     # Next.js
+  fake-bank      # Fastify, run-mode only
 packages/
-  core           # Mercury.Core's twin: errors, JWT, PhoneNumber, pagination, SMS, telemetry
-  contracts      # Zod schemas — identity + store
-  db-identity    # Drizzle schema + migrations
+  core           # errors, PhoneNumber, pagination, telemetry, tenant context
+  contracts      # Zod schemas
+  db-platform    # Drizzle schema + migrations
   db-store       #   "
   clients        # generated from OpenAPI: typed client + TanStack Query hooks
 ```
 
-Two databases, matching `cs-identity` and `cs-store`. The one-database-per-service split survives
-because it's already how the AppHost and Coolify are wired.
+> Revised per the status note. There is **no `apps/identity`** — identity is a Logto container
+> with its own database, so `packages/db-identity` is gone too. The split that remains is
+> **control plane vs data plane**, which is a deployment boundary, not a service decomposition.
 
 ---
 
@@ -542,10 +560,10 @@ TS Store keeps calling the surviving .NET payment service (fine — it's one HTT
 `#836` PAN-bypass reasoning carries over unchanged); or checkout is out of scope for now; or
 payments move to a provider SDK. This decides whether step 4 above is two weeks or two months.
 
-**Q5.** Is this a **coexisting subset** — VPN, Medicine and DownloadHelper keep running in .NET
-against the same Identity — or a **standalone product**? It decides whether Identity must keep
-serving .NET consumers (making `jti`, the internal-key scheme and the claim shapes hard contracts),
-and whether Identity can ever merge into Store.
+**Q5.** ✅ **Answered — standalone. The dropped services go away entirely.** No surviving .NET
+consumers, so nothing downstream pins `jti`, the internal-key scheme or the claim shapes. They stop
+being contracts and become choices, which is what makes **CZ** possible: adopt an IdP rather than
+port one. This is also what turns the whole exercise from a port into a greenfield POC.
 
 **Q6.** Is the mobile API surface in scope? `Medicine/Features/Mobile` leaves with Medicine, but
 the BouncyCastle hybrid RSA+AES path is in `Mercury.Core` and Identity-adjacent. If mobile is out,
@@ -554,12 +572,13 @@ that row leaves the table too.
 **Q7.** Does the panel's `Import` area (4 pages) belong to Medicine's drug import, or to Store? It's
 the one area I couldn't classify from the folder name.
 
-**Q8.** With only Store and Identity left — and Store at 67% of the code — is the service split
-still worth its cost? A modular monolith with two schemas would drop the gateway, the service
-discovery shim in **AD**, and the cross-service HTTP hop, at the price of one deployable. The
-original "genuinely disjoint bounded contexts" argument rested on VPN and Medicine being different
-businesses; commerce plus its own auth is one business. **Q5** decides this: if .NET services keep
-authenticating against Identity, it stays split regardless.
+**Q8.** ✅ **Resolved by Q5.** With no .NET consumers and identity bought rather than built, there
+is no "Store vs Identity" split left to argue about — the identity service isn't ours to split.
+What remains is **`platform` (control plane) and `store` (data plane)**, and that boundary is not a
+service decomposition you could collapse into a monolith: the data plane has to be separately
+deployable because it ships to a customer's VPS. The gateway question from **O** survives in a
+smaller form — with one public API per plane, Traefik routing plus a thin edge is enough, and the
+service-discovery shim in **AD** is needed in exactly one direction.
 
 **Q3.** *(still open)* Nest or bare Fastify? I argued Fastify in **E**; if the team's instinct is
 "where's my DI container", Nest is the lower-drama choice and I wouldn't fight it.
