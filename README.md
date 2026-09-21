@@ -1,4 +1,4 @@
-# mercury-ts
+# mercatus
 
 A **multi-tenant commerce platform** — merchants buy a store, list products, and sell. Think a
 marketplace of independent shops: most run on our shared infrastructure, some run on the
@@ -234,13 +234,6 @@ Shaped by a production .NET system (`Mercury`) and by reading two prior-art repo
 
 ## Open questions
 
-**Q17.** For a dedicated instance, does the **dashboard** run on their server too, or centrally
-against their API? On their box means genuine autonomy when we're down; centrally means one
-front end to ship. The diagrams currently assume their box.
-
-**Q19.** The repo is still called `mercury-ts`, which no longer describes anything — there is no
-Mercury in it. Worth renaming before it gets referenced anywhere.
-
 **Q16.** For a dedicated instance, who operates the server — we install and maintain it, or they
 do and we support only the software? The biggest cost question in that tier.
 
@@ -252,4 +245,15 @@ theirs via federation?
 Answered: **Q5** (standalone — no surviving consumers of the old system), **Q8** (the remaining
 boundary is control plane vs data plane, a deployment boundary rather than a service split),
 **Q9** (a tenant is a store), **Q13** (signup creates the tenant, payment activates it),
-**Q15** (no shared product master — every catalog is seller-owned).
+**Q15** (no shared product master — every catalog is seller-owned), **Q17** (the dashboard ships
+with the instance — see below), **Q19** (renamed to `mercatus`, and moved out of the Alternet
+project tree).
+
+**DK.** On **Q17**, the simple option and the correct one are the same one, which is lucky. The
+dashboard **ships with the instance**: it is the same app deployed twice with a different
+`STORE_API`, which is one environment variable and no new code — the same treatment the API gets
+under `CC1`. The central alternative sounds simpler but isn't: it would need per-tenant API
+resolution at runtime, CORS on every dedicated instance, and the browser reaching their server
+directly. It would also gut the flagship demo, because a merchant who cannot open their dashboard
+while our control plane is down is not a merchant whose shop kept working. The diagrams in
+[`docs/architecture.md`](./docs/architecture.md) already assume this; no change needed.

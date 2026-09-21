@@ -4,7 +4,7 @@
 > are still referenced elsewhere, and because the stack reasoning in **E**–**J**, **X** and
 > **AD**–**AH** still holds. Treat every scope, line-count and sequencing claim as history.
 
-# mercury-ts
+# mercatus — port analysis (archived)
 
 A stack design for rewriting **part of** Mercury in TypeScript. Thinking-process document —
 nothing is committed to, and no code exists yet.
@@ -597,4 +597,4 @@ decides between **AQ** and the cheaper alternative in **AR**.
 ---
 
 *Written 2026-09-21, revised 2026-09-22 against `mercury@c7f4e009` (`develop`). Companion to
-`../mercury-vs-eshop.md`, which supplies most of the architectural facts cited here.*
+`~/Desktop/projects/alternet/mercury-vs-eshop.md`, which supplies most of the architectural facts cited here.*
