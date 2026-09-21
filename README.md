@@ -274,7 +274,7 @@ and one JWKS**, which is what lets a dedicated instance verify tokens offline:
 | | Where staff sign in | Cost | When |
 |---|---|---|---|
 | 1 | Central login, shared branding | zero | **the POC** |
-| 2 | Central login, **per-tenant branding** from the organization id | a config table | the product default — most of the perceived white-label for almost nothing |
+| 2 | Central login, **per-tenant branding** from the organization id | a config table | *deferred* — see **DV** |
 | 3 | Custom login domain per tenant, `login.acme.com` | per-tenant certs + ACME automation | when someone pays for it |
 | 4 | **Federation** — the tenant's own Entra/Google/Okta, brokered by us | a connector per tenant | when an enterprise demands it |
 | 5 | The tenant's IdP directly, we just trust it | — | **never** |
@@ -294,3 +294,39 @@ One thing to keep, so tier 2 is later an addition rather than a retrofit: **reso
 a request, not from a route parameter.** One function that takes the request and returns a tenant
 candidate — checking host first, then path — costs the same today and means tier 2 becomes "add a
 `domains` table and point DNS" instead of touching every route.
+
+
+**DV.** **Decided: the login stays neutral; branding lives in the stores.** Option 2 is deferred
+indefinitely, because of who sees which surface. Shoppers are rows in a store's own database
+(`CD3`), so they **never reach the identity service** — the only people who see a Logto page are
+merchant staff, who know they bought a platform. A neutral sign-in page is arguably a trust signal
+for them. Per-tenant login branding would theme the one page seen by the audience least impressed
+by it.
+
+If it is ever wanted, Logto supports organization-level logo, colours and custom CSS natively,
+selected by passing `organization_id` on the authorization request — roughly half a day, most of
+it plumbing that exists anyway. The fallback if that turns out to be Cloud-only is app-level
+branding with a Logto application per tenant, which dedicated instances may need regardless for
+their own callback URLs.
+
+**DW.** **A dedicated store is fully branded, and it costs almost nothing extra.**
+
+| | Where it lives | In the POC |
+|---|---|---|
+| Logo, colours, fonts, favicon | a `branding` row → CSS custom properties | yes |
+| Own domain | comes with the tier | yes |
+| Order emails from their domain | per-tenant sender config | if we send any |
+| SMS sender id | their own provider account (`CE2`) | later |
+| No "powered by" | an **entitlement in the licence** (`CC3`), never a build flag | yes |
+| Custom templates and layout | design tokens only | no |
+
+**DX.** The one seam that stays visibly ours: staff on a dedicated instance bounce to our identity
+domain to sign in and back again. That is the trigger for option 3 — a custom login domain — if a
+customer ever objects. It is not worth pre-building.
+
+**Q20.** Is a shopper account **per store** or **platform-wide**? Per store is what the rest of the
+design assumes, and it is what makes a dedicated instance able to keep selling with the control
+plane down (`CG1`) while shopper PII stays on the merchant's own server (`CI1`). Platform-wide
+would be more Amazon-like for shoppers, but it puts shopper identity in the control plane and makes
+every dedicated store depend on us for every login. A product decision, not a technical one — but
+the flagship demo depends on the answer.
