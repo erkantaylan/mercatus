@@ -4,8 +4,10 @@ A **multi-tenant commerce platform** — merchants buy a store, list products, a
 marketplace of independent shops: most run on our shared infrastructure, some run on the
 merchant's own server, and everyone signs in through one identity service.
 
-This is a **proof of concept for a showcase**. It runs entirely on one machine, with no external
-accounts, no cloud, and no CI. Nothing here is production code yet.
+This is a **learning project** — a proof of concept, built small on purpose. It runs entirely on
+one machine, with no external accounts, no cloud and no CI. The goal is to get the interesting
+parts right, not to be complete: multi-tenancy, a shared identity service, and a store that runs
+on someone else's server and keeps working when ours is down.
 
 ---
 
@@ -34,8 +36,8 @@ Number 4 is the demo. The rest is table stakes.
 |---|---|
 | Sign in with phone + OTP | via the identity container |
 | Buy a store | checkout through `fake-bank`, tenant activated on callback |
-| Merchant dashboard | create a store, add products, see orders |
-| Storefront | browse, add to basket, order |
+| Merchant dashboard | add products, see orders |
+| Storefront | browse, basket, checkout — happy path only |
 | Two pooled tenants | seeded, isolated, with a leak test suite proving it |
 | One dedicated instance | same image, own database, "customer's VPS" |
 | Platform console | operator view across both planes |
@@ -51,6 +53,10 @@ Number 4 is the demo. The rest is table stakes.
 | **CI / GitHub Actions** | Everything runs locally for now. Tests exist and are run by hand |
 | **Real payment provider** | `fake-bank` is better for a demo — it can fail on purpose |
 | **Invoicing and tax** | Orders have numbers; they are not invoices |
+| **Discounts, categories, campaigns** | Products have a price. That's it |
+| **Shipping, returns, refunds** | Checkout ends at "ordered" |
+| **Variants** | Looks small, isn't |
+| **Visual polish** | Consistent and plain beats pretty. One component set, no theming work |
 | **Custom domains and certificates** | Tier 2 is designed for, not built |
 | **Per-tenant SSO federation** | Later, if ever |
 | **Search, recommendations, mobile** | Not the point |
@@ -340,3 +346,54 @@ survives intact.
 Consequence, per `BI2`: a shopper's token is tenant-less, so for shopper requests the tenant comes
 from the route while the subject comes from the token, and **both** conditions are always applied.
 Staff requests keep taking the tenant from the token.
+
+
+## Decisions from the sizing pass
+
+**EN.** **Q3 — Fastify.** Confirmed. With no mediator to replace, no job queue, no DI-heavy service
+graph and identity outsourced, Nest's main draw — familiarity for people arriving from ASP.NET
+Core — is most of what it would have brought.
+
+**EO.** **Q21 — a learning project, kept small.** Two pooled tenants, one dedicated instance, a
+storefront and a dashboard. Simple consistent UI, no polish budget.
+
+**EP.** **Q25 — the dedicated instance is a second Aspire AppHost**, binding to the first through
+`AddExternalService`. This is better than a resource inside one topology, and it is the single
+best structural decision in the design so far: AppHost B *cannot* reference AppHost A's databases,
+because they are not in its model. The trust boundary stops being a convention enforced by a test
+and becomes a property of the tool. It also makes the outage demo Ctrl-C rather than a dashboard
+click, and it replaces `WithExplicitStart()` — you simply don't run B unless you're working on
+tier 3. Topology and costs in [`docs/architecture.md`](./docs/architecture.md) §10.
+
+**EQ.** **Q22 — Aspire's dashboard is the telemetry stack.** Everything speaks OTLP to it, with no
+extra containers. Two AppHosts means two dashboards, which is the honest arrangement: the control
+plane only knows about a dedicated instance what that instance pushes. The platform console gets
+that from a small **heartbeat** — version, tenant, licence id, a couple of counters — not from
+OTLP. Grafana stays the escape hatch for anything needing persistence, alerting or history, and
+nothing in the POC does.
+
+**ER.** **Q23 — commerce goes exactly this deep:** a product has a title, price, image and stock
+count; a basket lives in the browser; checkout creates an order; the dashboard lists orders. That
+is the whole domain.
+
+**ES.** **Q24 — the licence has two states, and "passive" is not "unreachable".** That distinction
+is the point (`CG3`):
+
+| State | Storefront | Dashboard | Cause |
+|---|---|---|---|
+| **active** | full | full | normal |
+| **passive** | browse only, **checkout blocked**, banner | **fully usable** | didn't pay, or suspended by us |
+| unreachable, within grace | full | full | our outage |
+| unreachable, grace expired | browse only, checkout blocked | read-only | our outage, prolonged |
+
+Passive blocks the money-making action and leaves everything else alone — the merchant can still
+see their data and reach the page that fixes it. Never hide a tenant's own data from them, and
+never delete anything. A dedicated instance learns it went passive by **polling** (`CE4`), on a
+short interval so the demo is immediate: flip it in the platform console, watch checkout start
+refusing a few seconds later.
+
+**ET.** **Q12 — no hierarchy.** A tenant is flat. No chains, no groups, no tenant-of-tenants.
+
+**EU.** **Q2 — closed, not answered.** It asked whether a Mercury rewrite was driven by team
+composition or by the type gap between C# and the storefront. It was a question about justifying
+a rewrite, and this is a learning project rather than a rewrite, so it no longer applies.

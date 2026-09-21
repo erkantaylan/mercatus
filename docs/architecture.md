@@ -416,66 +416,79 @@ order numbers come from a per-tenant counter, never a sequence (`BG2`).
 
 ## 10. What `aspire run` starts
 
-One command brings up the control plane, a pooled store with two tenants, and a dedicated store
-standing in for a customer's VPS.
+**Two AppHosts, not one.** The control plane and the pooled store are one Aspire application; the
+dedicated instance is a **second** Aspire application that binds to the first as an external
+service. That models "their server" far better than a resource inside our own topology.
 
 ```mermaid
-flowchart TD
-    subgraph always["starts by default"]
+flowchart TB
+    subgraph A["AppHost A — control plane + pooled store"]
         direction TB
-        idp["identity"]
+        edge["traefik, fixed port<br/>*.localtest.me"]
+        idp["identity — Logto container"]
         idpdb[("db-identity")]
         pf["platform"]
         pfdb[("db-platform")]
-        adm["admin console"]
+        adm["platform console"]
         bank["fake-bank"]
         papi["store-pooled"]
         pdb[("db-pooled")]
-        pdash["dashboard-pooled"]
-        pfront["storefront-pooled"]
-        seed["dev-seed<br/>2 pooled tenants, 1 install"]
+        pweb["dashboard + storefront"]
+        seed["dev-seed — 2 tenants"]
     end
 
-    subgraph explicit["WithExplicitStart — start when needed"]
+    subgraph B["AppHost B — 'acme's VPS'"]
         direction TB
+        ext["AddExternalService<br/>control-plane, identity"]
         dapi["store-acme<br/>DEPLOYMENT_MODE=dedicated"]
         ddb[("db-acme")]
-        ddash["dashboard-acme"]
-        old["store-oldco<br/>pinned N-1 image"]
+        dweb["dashboard + storefront"]
     end
-
-    edge["traefik<br/>*.localtest.me"]
 
     idp --- idpdb
     pf --- pfdb
     papi --- pdb
     dapi --- ddb
-    edge --> pfront
-    edge --> pdash
-    edge --> ddash
-    papi --> pf
-    dapi -.->|"HTTP only"| pf
-    dapi -.->|"HTTP only"| idp
-    old -.-> pf
-    seed --> pf
+    dapi --> ext
+    dweb --> ext
+    ext -->|"stable URLs over HTTP"| edge
 ```
 
-What that buys, beyond convenience:
+AppHost B binds to A through `AddExternalService`, which is in `Aspire.Hosting` 13.5.3:
 
-| Demo | How |
+```csharp
+// AppHost B — the dedicated instance
+var controlPlane = builder.AddExternalService("control-plane", "http://platform.localtest.me:8080");
+var identity     = builder.AddExternalService("identity",      "http://id.localtest.me:8080");
+
+var acmeDb = builder.AddPostgres("db-acme").PublishAsContainer().AddDatabase("cs-acme", "store");
+
+var acme = builder.AddDockerfile("store-acme", "../../apps/store")
+                  .WithHttpEndpoint(env: "PORT")
+                  .WithEnvironment("DEPLOYMENT_MODE", "dedicated")
+                  .WithEnvironment("TENANT_ID", "acme")
+                  .WithReference(acmeDb).WaitFor(acmeDb)
+                  .WithReference(controlPlane)
+                  .WithReference(identity);
+```
+
+### Why two is better than one
+
+| | |
 |---|---|
-| Tenant isolation is real | two pooled tenants seeded; the leak suite runs against them (`BL1`) |
-| Same code, both modes | `store-pooled` and `store-acme` are the same app directory (`CC1`) |
-| Offline behaviour | stop `platform` in the dashboard, watch `store-acme` degrade (§8) |
-| Version skew | `store-oldco` runs the N-1 image against today's control plane (`CO2`) |
-| Payment failure paths | `fake-bank` is told what to answer (`CR1`) |
-| Unified telemetry | every resource, including the "remote" one, pushes OTLP to the Aspire dashboard |
+| **The trust boundary stops being a convention** | AppHost B *cannot* reference A's databases — they are not in its model. `CO3` is enforced by the tool instead of by a test |
+| **The outage demo gets visceral** | Ctrl-C the control plane's AppHost. Not "stop a resource" — stop the whole plane |
+| **Telemetry splits honestly** | Each AppHost has its own dashboard, so the control plane genuinely only knows what B pushes to it (`CE4`, `CL1`) |
+| **The everyday loop stays light** | Don't run B unless you are working on tier 3. This replaces `WithExplicitStart()` |
 
-Local hostnames use `*.localtest.me`, which resolves to 127.0.0.1 with no `/etc/hosts` editing:
-`platform.localtest.me/shop/acme` (tier 1), `acme-store.localtest.me` (tier 2),
-`acme.localtest.me` (tier 3).
+### What it costs
 
----
+- **A must expose stable URLs**, so its Traefik takes a fixed port and `*.localtest.me` hostnames.
+  That was already the plan for tier routing.
+- Two terminals, and an `aspire.config.json` so `aspire run` knows which AppHost is meant.
+- To merge the two dashboards into one view, point B's `OTEL_EXPORTER_OTLP_ENDPOINT` at A's — but
+  the split is the more honest default, and the platform console learns about dedicated instances
+  from their **heartbeat**, not from OTLP.
 
 ## 11. POC scope
 
@@ -499,10 +512,11 @@ flowchart LR
         direction TB
         o1["real payment provider"]
         o2["invoicing and tax"]
-        o3["custom domains and certs"]
-        o4["SSO federation per tenant"]
-        o5["search, recommendations"]
-        o6["mobile"]
+        o3["tier 2 — custom domains"]
+        o4["discounts, categories, campaigns"]
+        o5["shipping, returns, refunds"]
+        o6["search, recommendations, mobile"]
+        o7["visual polish"]
     end
 ```
 
