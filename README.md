@@ -324,9 +324,19 @@ their own callback URLs.
 domain to sign in and back again. That is the trigger for option 3 — a custom login domain — if a
 customer ever objects. It is not worth pre-building.
 
-**Q20.** Is a shopper account **per store** or **platform-wide**? Per store is what the rest of the
-design assumes, and it is what makes a dedicated instance able to keep selling with the control
-plane down (`CG1`) while shopper PII stays on the merchant's own server (`CI1`). Platform-wide
-would be more Amazon-like for shoppers, but it puts shopper identity in the control plane and makes
-every dedicated store depend on us for every login. A product decision, not a technical one — but
-the flagship demo depends on the answer.
+**Q20.** ✅ **Answered — platform-wide, with a store-issued session.** Shoppers are ordinary users
+in the shared identity service, with **no organization membership** — that is what separates them
+from merchant staff (`CD3`, revised). It is also markedly less code: signup, phone OTP, session
+refresh, account recovery and OTP rate limiting all come from the IdP rather than being written
+and secured by hand.
+
+The offline objection that pushed the other way turned out to be narrow. A dedicated instance
+verifies existing tokens **offline** against cached JWKS; it only needs the control plane to mint
+new ones. So the store performs the OIDC login once and then **issues its own session cookie**,
+after which every request is checked locally. During an outage, existing shoppers keep browsing,
+ordering and checking out — only a first-ever sign-in to that store fails. The flagship demo
+survives intact.
+
+Consequence, per `BI2`: a shopper's token is tenant-less, so for shopper requests the tenant comes
+from the route while the subject comes from the token, and **both** conditions are always applied.
+Staff requests keep taking the tenant from the token.
