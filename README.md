@@ -234,20 +234,20 @@ Shaped by a production .NET system (`Mercury`) and by reading two prior-art repo
 
 ## Open questions
 
-**Q16.** For a dedicated instance, who operates the server — we install and maintain it, or they
-do and we support only the software? The biggest cost question in that tier.
+**Q10.** Are storefront shoppers ever the same accounts as merchant staff? Currently no — see
+`CD3` — and the POC keeps them apart.
 
-**Q14.** Where do a dedicated tenant's staff sign in — our identity domain with their branding, or
-theirs via federation?
+**Q12.** Do stores ever group into chains, with one operator over several? A hierarchy is far
+cheaper to design in than to add.
 
-**Q11.** Do tenants ever need their own domain? Decides whether tier 2 gets built.
+**Q2.**/**Q3.** Framework and team-composition questions carried over from the port analysis.
 
 Answered: **Q5** (standalone — no surviving consumers of the old system), **Q8** (the remaining
 boundary is control plane vs data plane, a deployment boundary rather than a service split),
 **Q9** (a tenant is a store), **Q13** (signup creates the tenant, payment activates it),
 **Q15** (no shared product master — every catalog is seller-owned), **Q17** (the dashboard ships
-with the instance — see below), **Q19** (renamed to `mercatus`, and moved out of the Alternet
-project tree).
+with the instance), **Q19** (renamed to `mercatus`, and moved out of the Alternet project tree),
+**Q16**, **Q14** and **Q11** (below).
 
 **DK.** On **Q17**, the simple option and the correct one are the same one, which is lucky. The
 dashboard **ships with the instance**: it is the same app deployed twice with a different
@@ -257,3 +257,40 @@ resolution at runtime, CORS on every dedicated instance, and the browser reachin
 directly. It would also gut the flagship demo, because a merchant who cannot open their dashboard
 while our control plane is down is not a merchant whose shop kept working. The diagrams in
 [`docs/architecture.md`](./docs/architecture.md) already assume this; no change needed.
+
+
+**DM.** **Q16 — we operate the dedicated instance, for the POC.** The "customer's VPS" is a
+container on a laptop, so this is free. The trap to avoid is letting it become architectural:
+because we can reach the box, it is tempting to make the update mechanism a push — SSH in, copy
+files, restart. That breaks `CE4` and it is the single most expensive thing to undo, because the
+real answer for a product is almost certainly *they own the infrastructure, we own the software
+lifecycle*. So the POC keeps the outbound-only discipline anyway: the instance registers itself,
+pulls its config and its updates, and pushes telemetry. That agent is about fifty lines and it is
+what keeps Q16's real answer changeable later.
+
+**DN.** **Q14 — five options, and the POC takes the first.** All but the last keep **one issuer
+and one JWKS**, which is what lets a dedicated instance verify tokens offline:
+
+| | Where staff sign in | Cost | When |
+|---|---|---|---|
+| 1 | Central login, shared branding | zero | **the POC** |
+| 2 | Central login, **per-tenant branding** from the organization id | a config table | the product default — most of the perceived white-label for almost nothing |
+| 3 | Custom login domain per tenant, `login.acme.com` | per-tenant certs + ACME automation | when someone pays for it |
+| 4 | **Federation** — the tenant's own Entra/Google/Okta, brokered by us | a connector per tenant | when an enterprise demands it |
+| 5 | The tenant's IdP directly, we just trust it | — | **never** |
+
+**CD4** (new rule): *a data plane trusts exactly one issuer.* Option 5 breaks that — tokens become
+heterogeneous, every instance needs N issuer configs, and offline verification stops being simple.
+Option 4 looks similar but isn't: we stay the issuer and broker the upstream, so the data plane
+still sees one JWKS.
+
+**DP.** **Q11 — yes, tier 2 is out of the POC. Build tier 1 and tier 3.** They differ
+*architecturally*: shared database with RLS versus a separate database, a separate deployment,
+offline operation and licensing. Tier 2 differs only in **routing and certificates** — it is tier 1
+code with the tenant resolved from a hostname instead of a path, so it would add ACME automation,
+CNAME verification and certificate storage while proving nothing new.
+
+One thing to keep, so tier 2 is later an addition rather than a retrofit: **resolve the tenant from
+a request, not from a route parameter.** One function that takes the request and returns a tenant
+candidate — checking host first, then path — costs the same today and means tier 2 becomes "add a
+`domains` table and point DNS" instead of touching every route.

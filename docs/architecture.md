@@ -136,6 +136,11 @@ flowchart TD
     T3 --> S3["their database<br/>RLS on, exactly one tenant"]
 ```
 
+**Tier 2 is out of the POC** — it is tier 1 code with the tenant resolved from a hostname instead
+of a path, so it adds certificate automation and proves no new architecture. What the POC *does*
+build is the seam: tenant resolution takes a **request** and checks host before path, so tier 2
+later means adding a `domains` table and pointing DNS, not touching every route.
+
 Routing at request time:
 
 ```mermaid

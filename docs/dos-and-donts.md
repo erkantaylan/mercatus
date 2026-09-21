@@ -25,6 +25,7 @@ section follows from that one sentence.
 | **CE3** | Bill from usage numbers a data plane reports | Sign the reports, treat them as **telemetry**, and enforce limits through the signed licence | They can edit the numbers. Metering you can't verify isn't metering |
 | **CE4** | Open inbound connections into their network — SSH, VPN, a callback port | Data plane **pulls** config and updates; **pushes** telemetry. Outbound only · `CF` | The day support needs to SSH into a customer VPS, you have bought an on-prem support business instead of a SaaS |
 | **CE5** | Assume their database is private from them | Treat the data plane's DB as readable by the customer | It is their machine. Design so that this is fine, because it's true whether you design for it or not |
+| **CE7** | Let "we can SSH in" become the update mechanism, even while we operate the box ourselves | Instances **register, pull config, pull updates, push telemetry** — from day one | Reachability during a POC is an accident of hosting, not a design. Push-based updates are the most expensive thing to undo when the customer starts owning the server |
 | **CE6** | Ship a build that can't tell you what it is | Every data plane reports its **version, tenant and licence id** on every telemetry batch | Version skew is invisible until you can query it · `CH` |
 
 ---
@@ -62,6 +63,7 @@ section follows from that one sentence.
 | **BC1** | Issue one fat token listing every membership | Tenant-less **refresh session** + **tenant-scoped access token**; switching tenants mints a new one | A fat token grows with membership, can't be revoked per tenant, and turns one leak into access to every tenant |
 | **BC2** | Disable token revocation because it's simpler | Keep revocation on, keep access tokens short | The course repo sets `enableTokenRevocation: false` with 60-minute tokens: a removed employee keeps access for an hour and a leaked token cannot be killed |
 | **CD3** | Put storefront shoppers in the same identity system as merchant staff | Staff/merchants in the IdP (organizations, roles); **shoppers are tenant-scoped rows** in the store database | Different populations, different volumes, different lifecycles — and per-MAU IdP pricing applied to every shopper is a business-model problem, not a technical one |
+| **CD4** | Let a data plane trust more than one token issuer | **One issuer, one JWKS.** Federate upstream IdPs *through* ours rather than trusting them directly | Heterogeneous tokens mean every instance carries N issuer configs and offline verification stops being simple. Brokering keeps one key set to cache |
 | **BA1** | Assume one user belongs to one tenant | Model `membership` as `(user_id, tenant_id, role)` from day one | The course repo takes the first matching group and therefore cannot express a person who works for two merchants. Retrofitting this is a migration across every table |
 
 ---
