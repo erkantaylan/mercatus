@@ -93,7 +93,7 @@ section follows from that one sentence.
 | # | Don't | Do | Why |
 |---|---|---|---|
 | **BG1** | Write a global unique constraint | Include the tenant: `unique (tenant_id, sku)` | Every uniqueness assumption inherited from a single-tenant schema is wrong now |
-| **BG2** | Number invoices from a Postgres sequence | Per-tenant counter row taken with `select … for update` inside the invoice transaction | Sequences leak on rollback. Gapless per-tenant numbering is a **legal** requirement for e-Fatura, and this is miserable to retrofit into 35 invoice screens |
+| **BG2** | Number orders from a Postgres sequence | Per-tenant counter row taken with `select … for update` inside the order transaction | Sequences leak on rollback, so numbering is neither per-tenant nor gapless. Many jurisdictions require gapless sequential numbering on anything invoice-shaped, and every tenant expects their orders to start at 1 — not at wherever the global sequence happened to be |
 | **AM1** | Schedule a job to flip a row's state at a time | Derive the state from its timestamps: `where starts_at <= now() and ends_at > now()` | Mercury's `CampaignEntity.HangfireStartJobId`/`HangfireEndJobId` exist only to do what a predicate does — and carry the bug class where the stored job id drifts from the row |
 | **AM2** | Add a queue before there is a side effect to queue | Add **pg-boss** the first time something must *happen* that can't be derived — an email at T+24h, an export, a retryable webhook | Not before |
 | **J1** | Hand-edit generated migration SQL | Change the schema, regenerate | Mercury's two migration rules exist because a missing `[Migration]` attribute compiled, deployed and was silently ignored, and a `defaultValue` contradicting an initializer silently deactivated 50 of 61 production users for two months |
@@ -104,7 +104,7 @@ section follows from that one sentence.
 
 | # | Don't | Do | Why |
 |---|---|---|---|
-| **CI1** | Let PII ride out of a customer's box in a log line | **Scrub at source**; state in the contract exactly what you collect | Health-adjacent data under KVKK/GDPR. This is a legal artifact, not an ops feature |
+| **CI1** | Let PII ride out of a customer's box in a log line | **Scrub at source**; state in the contract exactly what you collect | Shopper names, addresses and phone numbers are personal data under GDPR/KVKK wherever the tenant operates. What you collect from someone else's server is a legal artifact, not just an ops feature |
 | **CL1** | Assume platform admin can query every tenant | Design telemetry-derived views for dedicated tenants from the start | Otherwise half your admin screens can't serve your highest-paying tier |
 | **CJ1** | Use one metering path for both tiers | Pooled: you measure. Dedicated: they report, signed, with licence-enforced ceilings | See `CE3` |
 | **#818** | Use persistent dev containers | Default lifetime, fresh per run | A persistent container is shared by every AppHost on the machine, so a second checkout silently attaches to the same database |
