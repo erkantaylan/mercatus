@@ -59,6 +59,13 @@ minimumReleaseAgeExclude:
   - typescript-eslint@8.70.1
   - drizzle-kit@0.31.11
   - drizzle-orm@0.45.3
+  - '@fastify/swagger@9.8.2'
+  - '@scalar/client-side-rendering@0.4.2'
+  - '@scalar/fastify-api-reference@1.70.0'
+  - '@scalar/json-schema-validator@0.1.3'
+  - '@scalar/openapi-parser@0.29.4'
+  - '@scalar/openapi-validator@0.1.3'
+  - '@scalar/types@0.20.1'
 
 # pnpm refuses to install while a dependency has an unapproved build script.
 onlyBuiltDependencies:

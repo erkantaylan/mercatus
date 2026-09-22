@@ -132,3 +132,47 @@ file is where they are amended.
   set.** Two of the four db-store suites need a live Postgres; the other two parse the migrations
   and grep the source, so `pnpm -r test` without a database still enforces "every new table has a
   policy" and "no application query filters by tenant".
+
+## Task 03 — apps/store, the data plane API
+
+- **Two variables added to the §8.2 contract: `BASE_HOST` (default `localtest.me`) and
+  `LOG_LEVEL` (default `info`).** Host-based tenant resolution has to know which DNS suffix is
+  ours before it can read a label as a tenant, and hard-coding `localtest.me` in core would make
+  tier 2 a code change rather than configuration. `HOST` (bind address, default `127.0.0.1`) is
+  also read, beside the `PORT` that §8.2 already names.
+- **A candidate that disagrees with the deployment is a 403, not a switch.** §3.6 says
+  deployment → host → path, first hit wins. Taken literally, a dedicated instance pinned to
+  `zenith` would serve zenith's catalog at `/t/acme/products`. `resolveTenantCandidate` keeps the
+  documented signature and `tenantCandidates` returns the whole list, so the auth hook can refuse
+  a disagreement. Same rule as BI1, arriving through the deployment instead of a token.
+- **Reserved host labels are `platform`, `id`, `identity`, `admin`, `bank`, `api`, `www`.**
+  BUILD-PLAN §3.6 names four; the other three are infrastructure names a merchant slug must not be
+  able to shadow.
+- **The tenant context is carried on `request.tenantContext` and entered per handler through one
+  helper, not established in a hook.** AsyncLocalStorage set inside an async Fastify hook does not
+  reach the handler, and `enterWith()` can outlive a request on a keep-alive connection — which
+  here would be a cross-tenant leak. So `inTenantTx(deps, req, fn)` wraps
+  `runInTenant(ctx, () => withTenantTx(db, fn))`, one call at the top of each handler. A handler
+  that forgets it throws `MissingTenantContextError` at the first query.
+- **`PATCH /api/settings` is not implemented, and the store is the wrong place for it.** The app
+  role has SELECT on `tenants` and nothing else, because that table has no RLS; granting UPDATE
+  would open a cross-tenant write surface with no policy to scope it. Store name and branding are
+  control-plane facts mirrored down (BV1), so the edit belongs on the platform API, which
+  re-mirrors. `GET /api/settings` and `GET /api/licence` exist.
+- **`/health` reports `{status, version, mode, tenant}`.** The §6.0 health shape is
+  `{status, version}`; a data plane that cannot say which mode it is running and which tenant it
+  is pinned to fails CE6, and responses are serialised through their Zod schema, so the extra
+  fields had to be in the contract. Added as `storeHealthSchema` in `@mercatus/contracts`, beside
+  `deleteResultSchema` for the DELETE reply.
+- **`/_meta` reports the licence of the tenant the request names, and `active`/`healthy` when it
+  names none.** A pooled process serves N merchants and has no single licence; it also shares a
+  machine with the control plane, so "never polled" is its normal state rather than an outage.
+  The degradation demo runs against a dedicated instance, where the deployment pins the tenant.
+- **`turbo.json` now declares `env` on the `test` and `migrate` tasks.** Turbo passes a task only
+  the variables its `env` list names, so `pnpm check` was running the live-database suites as
+  skipped and still reporting success — 37 of db-store's 69 tests. Not a design decision so much
+  as a trap that had to be closed before task 04 inherited it.
+- **`@mercatus/core` now depends on fastify, @fastify/cors, @fastify/swagger, Scalar,
+  fastify-type-provider-zod and zod.** BUILD-PLAN §6.0 puts `createServer` in core, and the
+  composition helper is only worth having if it wires the whole set. No app registers those
+  plugins itself.

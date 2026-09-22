@@ -11,6 +11,7 @@ import { z } from 'zod';
 
 import {
   currencySchema,
+  healthSchema,
   isoDateSchema,
   isoDateTimeSchema,
   minorAmountSchema,
@@ -70,6 +71,16 @@ export const orderSchema = z.object({
 
 export const orderDetailSchema = orderSchema.extend({ lines: z.array(orderLineSchema) });
 
+/**
+ * `/health` on the data plane says more than `{ status, version }`: which of the two deployment
+ * modes this process is running (CC1) and, when it is pinned to one tenant, which one. A build
+ * that cannot tell you what it is fails CE6.
+ */
+export const storeHealthSchema = healthSchema.extend({
+  mode: z.enum(['pooled', 'dedicated']),
+  tenant: slugSchema.nullable(),
+});
+
 /* ------------------------------------------------- public / shopper surface */
 
 /** Every public route is under `/t/:slug`. The slug is the tenant candidate, not the tenant. */
@@ -107,6 +118,9 @@ export const createProductBodySchema = z.object({
 export const patchProductBodySchema = createProductBodySchema.partial().strict();
 
 export const idParamsSchema = z.object({ id: uuidSchema });
+
+/** What a DELETE answers. One shape, so no route invents `{ ok: true }` on its own. */
+export const deleteResultSchema = z.object({ deleted: z.literal(true) });
 
 export const settingsSchema = z.object({
   name: z.string(),
@@ -173,14 +187,17 @@ export type ProductList = z.infer<typeof productListSchema>;
 export type CreateProductBody = z.infer<typeof createProductBodySchema>;
 export type PatchProductBody = z.infer<typeof patchProductBodySchema>;
 export type Order = z.infer<typeof orderSchema>;
+export type OrderLine = z.infer<typeof orderLineSchema>;
 export type OrderDetail = z.infer<typeof orderDetailSchema>;
 export type OrderList = z.infer<typeof orderListSchema>;
 export type CheckoutBody = z.infer<typeof checkoutBodySchema>;
 export type CheckoutResult = z.infer<typeof checkoutResultSchema>;
+export type DeleteResult = z.infer<typeof deleteResultSchema>;
 export type Settings = z.infer<typeof settingsSchema>;
 export type PatchSettingsBody = z.infer<typeof patchSettingsBodySchema>;
 export type LicenceStatus = z.infer<typeof licenceStatusSchema>;
 export type LicenceRuntimeState = z.infer<typeof licenceRuntimeStateSchema>;
 export type LicenceView = z.infer<typeof licenceViewSchema>;
 export type StoreMeta = z.infer<typeof storeMetaSchema>;
+export type StoreHealth = z.infer<typeof storeHealthSchema>;
 export type DevLoginResult = z.infer<typeof devLoginResultSchema>;

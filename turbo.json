@@ -13,10 +13,12 @@
       "outputs": []
     },
     "test": {
-      "outputs": []
+      "outputs": [],
+      "env": ["DATABASE_URL", "DATABASE_ADMIN_URL", "DATABASE_SUPERUSER_URL", "AUTH_STUB_SECRET"]
     },
     "migrate": {
-      "cache": false
+      "cache": false,
+      "env": ["DATABASE_URL", "DATABASE_ADMIN_URL", "DATABASE_SUPERUSER_URL"]
     },
     "dev": {
       "cache": false,
