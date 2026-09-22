@@ -71,11 +71,19 @@ export const memberships = pgTable(
   (t) => [primaryKey({ columns: [t.userId, t.tenantId] })],
 );
 
-/** One licence per tenant. Features gate on `entitlements`, never on a build (CC3). */
+/**
+ * One licence per tenant. Features gate on `entitlements`, never on a build (CC3).
+ *
+ * `id` is not the primary key and is not ceremony: CE6 has every data plane report the licence it
+ * is running under on every heartbeat, and `heartbeatBodySchema.licenceId` is a uuid. Reusing
+ * `tenant_id` for that would collapse two identifiers into one and make "which licence is that
+ * box on" unanswerable the first time a licence is re-issued.
+ */
 export const licences = pgTable('licences', {
   tenantId: uuid('tenant_id')
     .primaryKey()
     .references(() => tenants.id),
+  id: uuid('id').notNull().unique().defaultRandom(),
   entitlements: jsonb('entitlements').$type<Entitlements>().notNull().default(sql`'{}'::jsonb`),
   validUntil: date('valid_until').notNull(),
   issuedAt: timestamp('issued_at', { withTimezone: true }).notNull().defaultNow(),
@@ -101,6 +109,8 @@ export const installations = pgTable('installations', {
   bootstrapTokenHash: text('bootstrap_token_hash'),
   instanceTokenHash: text('instance_token_hash'),
   version: text('version'),
+  /** Reported by the heartbeat (CE6). Null until the instance has said which licence it holds. */
+  licenceId: uuid('licence_id'),
   lastSeenAt: timestamp('last_seen_at', { withTimezone: true }),
   productCount: integer('product_count').notNull().default(0),
   orderCount: integer('order_count').notNull().default(0),

@@ -14,7 +14,13 @@
     },
     "test": {
       "outputs": [],
-      "env": ["DATABASE_URL", "DATABASE_ADMIN_URL", "DATABASE_SUPERUSER_URL", "AUTH_STUB_SECRET"]
+      "env": [
+        "DATABASE_URL",
+        "DATABASE_ADMIN_URL",
+        "DATABASE_SUPERUSER_URL",
+        "PLATFORM_DATABASE_URL",
+        "AUTH_STUB_SECRET"
+      ]
     },
     "migrate": {
       "cache": false,

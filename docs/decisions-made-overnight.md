@@ -232,3 +232,81 @@ file is where they are amended.
 - **The payment page's buttons post JSON with `fetch` rather than submitting a form.** Fastify does
   not parse `application/x-www-form-urlencoded` without `@fastify/formbody`, which is not in the
   catalog. One dependency avoided for four lines of script.
+
+## Task 04a — apps/platform, the control plane
+
+- **The signed licence is Ed25519, not an HMAC.** A dedicated store runs on a machine whose owner
+  has root (CE5). A shared-secret licence would put a key that MINTS licences — for that tenant
+  and every other — on that box, so the licensing mechanism itself would break CE1. Asymmetric
+  means the instance holds only the public half: it can check a licence and it cannot write one.
+  The public key is published at `GET /licence/jwks` for the instance to cache (CE4).
+- **`exp` on the licence is the end of `valid_until`, not a short session lifetime.** The two
+  clocks stay separate: the licence says what the merchant paid for, and the grace window for an
+  unreachable control plane is computed in the data plane from `last_success_at` (CG2, CG3).
+- **Three new environment variables, all in `apps/platform/src/config.ts`:**
+  `LICENCE_SIGNING_KEY` (Ed25519 PKCS8 PEM; there is deliberately no `LICENCE_PUBLIC_KEY`,
+  because the public half is derived and so cannot drift), `STORE_PLAN_PRICE_MINOR` (default
+  49900) and `STORE_PLAN_CURRENCY` (default TRY). A store has one price and the POC has no
+  pricing model; putting it in the environment beats a literal in a handler.
+- **A development licence key is committed**, at `apps/platform/keys/dev-licence-private.pem`, and
+  `loadPlatformConfig` refuses it under `NODE_ENV=production`. A key that changes at every boot
+  would make a cached JWKS wrong after a restart, which is exactly the path task 10 depends on.
+- **`PLATFORM_DATABASE_URL` is added to the §8.2 contract**, and to `turbo.json`'s `test` task.
+  `pnpm check` runs every suite at once and the data-plane suites already own `DATABASE_URL` for
+  the `store` database; one variable cannot be two databases. It falls back to `DATABASE_URL` when
+  only the platform package is run. The `turbo.json` line is the only edit this task made outside
+  `apps/platform` and `packages/db-platform`, and it was made because a variable turbo does not
+  know about is a suite that skips while the run stays green (lessons/03).
+- **`loadPlatformConfig()` lives in `apps/platform/src/config.ts` rather than in
+  `packages/core/src/config.ts`,** which §8.2 names as its home. The reason is concurrency, not
+  design: another agent was writing `apps/fake-bank` at the same moment, and two agents rewriting
+  one shared file silently clobber each other. It depends on nothing in the app; moving it into
+  core is a cut and a paste.
+- **New wire shapes live in `apps/platform/src/schemas.ts` rather than in `@mercatus/contracts`,**
+  for the same reason, and are written against the contracts primitives so the move is mechanical:
+  `createTenantBodySchema`, `activateTenantBodySchema`, `signedLicenceSchema`, `jwksSchema`,
+  `installationSchema`, `installationListSchema`, `devOperatorLoginBodySchema`. Task 08 should
+  move them when it builds the console that consumes them.
+- **The operator credential is a token with `aud: "operator"`, not a static admin secret.**
+  `POST /dev/login/operator` mints an HS256 JWT under `AUTH_STUB_SECRET`, registered only when
+  `AUTH_ADAPTER=stub`, exactly like the store's dev login. A merchant's `aud: "staff"` token is
+  refused on every console route, so BH1 is a property of the token rather than of a code path,
+  and the Identity phase replaces the minting without touching a route.
+- **The platform calls `createServer()` with `auth: { adapter }` and no `tenants` or
+  `deployment`.** It has tenants in a table but no tenancy in its requests: no RLS, no
+  `app.tenant_id`, no per-request tenant decision. Handing the hook a `TenantDirectory` would make
+  it try to resolve a tenant from the URL of `/tenants/acme`, which is the one place in the repo
+  where a slug in a path is a query parameter rather than a claim about who is asking.
+- **An instance token may read its own tenant and no other — 403 otherwise.** That is BI1 arriving
+  through a credential instead of a route. An operator may read any tenant, and every such read is
+  logged with the operator's subject (BH2).
+- **`licences` gained an `id` column and `installations` a `licence_id`.** `heartbeatBodySchema`
+  names a licence id and CE6 wants every data plane to report the licence it is running under;
+  reusing `tenant_id` for that would collapse two identifiers and make "which licence is that box
+  on" unanswerable after the first re-issue. `tenant_id` remains the primary key — still one
+  licence per tenant.
+- **The fake-bank HMAC canonical strings, now fixed on both sides:**
+  request `reference|amountMinor|currency|callbackUrl`, callback
+  `providerRef|status|amountMinor|currency`, lowercase hex HMAC-SHA256. Written independently by
+  the two agents and identical; `apps/fake-bank/src/signing.ts` and
+  `apps/platform/src/signature.ts` are the two copies.
+- **`FAKE_BANK_HMAC_SECRET` must be at least 32 characters on the platform side too.** fake-bank's
+  own config demands 32, so a shorter secret would boot here and fail there — a mismatch found at
+  the first payment rather than at the first start.
+- **The payment callback checks the amount against our own payment row, and answers 409 when they
+  disagree.** A callback that verifies against its own signature but not against what we asked for
+  is a bug in one of the two; accepting it silently would make the signature pointless.
+- **A declined payment leaves the tenant `pending` with its slug and id intact**, and `/signup`
+  with the same slug resumes that tenant rather than colliding (CK2). Everything the buyer typed
+  survives the card being refused.
+- **`POST /tenants/:slug/activate` exists beside the console's flip.** §6.1 names only
+  `POST /tenants/:slug/licence`, which suspends and restores, but the Q13 split — signup creates,
+  payment activates — is only worth having if there is a supported way to activate without a
+  payment. Trials, internal demo stores and hand-onboarded merchants are that way. Flipping a
+  `pending` tenant is a 409: there is nothing to suspend.
+- **`GET /installations` is added to §6.1's list.** The heartbeat records a version and a licence
+  id that nothing else could read, and `tenantSummarySchema.installation` does not carry the
+  licence id. Without this endpoint "the heartbeat records it" is not observable.
+- **`POST /payments/proxy` from §6.1 was NOT built.** Checkout in the data plane ends at
+  "ordered" and moves no money, so there is nothing to proxy yet; building it now would be
+  guessing at the shape. It is the only endpoint in §6.1 that is missing.

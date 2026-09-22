@@ -12,6 +12,14 @@ export type PlatformSchema = typeof schema;
 export type PlatformDb = PostgresJsDatabase<PlatformSchema>;
 export type PlatformTx = Parameters<Parameters<PlatformDb['transaction']>[0]>[0];
 
+/**
+ * Either a connection or a transaction. There is no RLS in this database, so nothing has to be
+ * pushed into a transaction before a statement is legal -- a repository function is the same
+ * function whether it runs alone or inside the payment callback's transaction. The data plane's
+ * equivalent deliberately does NOT look like this: there, every query runs inside withTenantTx.
+ */
+export type PlatformExecutor = PlatformDb | PlatformTx;
+
 export interface PlatformDbHandle {
   readonly db: PlatformDb;
   close(): Promise<void>;

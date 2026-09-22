@@ -7,4 +7,9 @@
  */
 export * from './schema.js';
 export * from './client.js';
+export * from './repositories/users.js';
+export * from './repositories/tenants.js';
+export * from './repositories/licences.js';
+export * from './repositories/installations.js';
+export * from './repositories/payments.js';
 export { SEED_TENANT_IDS, SEED_USER, seed } from './seed.js';

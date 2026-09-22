@@ -58,6 +58,14 @@ describe('control-plane migrations', () => {
     expect(migrationSql).toMatch(/CONSTRAINT "payments_provider_ref_unique" UNIQUE\("provider_ref"\)/);
   });
 
+  it('gives a licence its own id, so a heartbeat can name the licence it holds (CE6)', () => {
+    // Not the primary key -- that is still tenant_id, one licence per tenant. This is what
+    // heartbeatBodySchema.licenceId carries; reusing tenant_id there would collapse two
+    // identifiers and make "which licence is that box on" unanswerable after a re-issue.
+    expect(migrationSql).toMatch(/ALTER TABLE "licences" ADD COLUMN "id" uuid/);
+    expect(migrationSql).toMatch(/ALTER TABLE "installations" ADD COLUMN "licence_id" uuid/);
+  });
+
   it('stores instance credentials only as hashes, individually revocable (CE1)', () => {
     expect(migrationSql).toContain('"bootstrap_token_hash" text');
     expect(migrationSql).toContain('"instance_token_hash" text');
