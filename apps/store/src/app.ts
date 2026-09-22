@@ -16,6 +16,7 @@ import { registerAuthRoutes } from './routes/auth.js';
 import { registerCheckoutRoute } from './routes/checkout.js';
 import { registerDevLoginRoutes } from './routes/dev-login.js';
 import { registerHealthRoutes } from './routes/health.js';
+import { registerPaymentRoutes } from './routes/payments.js';
 import { registerPublicRoutes } from './routes/public.js';
 import { registerStaffOrderRoutes } from './routes/staff-orders.js';
 import { registerStaffProductRoutes } from './routes/staff-products.js';
@@ -106,6 +107,7 @@ export async function buildStoreApp(config: StoreConfig): Promise<StoreApp> {
   registerHealthRoutes(app, deps);
   registerPublicRoutes(app, deps);
   registerCheckoutRoute(app, deps);
+  registerPaymentRoutes(app, deps);
   registerStaffProductRoutes(app, deps);
   registerStaffOrderRoutes(app, deps);
   registerStaffSettingsRoutes(app, deps);

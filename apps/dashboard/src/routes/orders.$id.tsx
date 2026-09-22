@@ -35,7 +35,12 @@ function OrderDetailPage() {
     <div>
       <PageHeader
         title={`Order #${String(order.data.number)}`}
-        subtitle={`${order.data.status} · ${new Date(order.data.placedAt).toLocaleString()}`}
+        subtitle={
+          `${order.data.status} · ` +
+          `${order.data.paymentStatus === 'unpaid' ? 'awaiting payment' : order.data.paymentStatus}` +
+          `${order.data.paymentRef === null ? '' : ` (${order.data.paymentRef})`} · ` +
+          `${new Date(order.data.placedAt).toLocaleString()}`
+        }
         actions={
           <Link to="/orders" className="mc-button">
             Back

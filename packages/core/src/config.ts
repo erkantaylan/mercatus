@@ -82,6 +82,12 @@ const storeEnvSchema = z
 
     PLATFORM_URL: z.url().optional(),
     /**
+     * The payment provider, read-only. The store asks it whether an order was paid and records
+     * the answer; it holds no credential for it, which is what keeps CE2 intact on a box whose
+     * owner has root. Absent means no settlement route is registered at all.
+     */
+    FAKE_BANK_URL: z.url().optional(),
+    /**
      * A DEDICATED instance's own revocable credential, handed out by /installations/register
      * (CE1). It is also what says "report telemetry": pooled is measured by the control plane
      * itself, dedicated reports, and the two are never one path (CJ1).
@@ -155,6 +161,8 @@ export interface StoreConfig {
   readonly storePublicUrl: string | undefined;
   readonly baseHost: string;
   readonly platformUrl: string | undefined;
+  /** The payment provider's base URL. Read-only, and never a credential (CE2). */
+  readonly fakeBankUrl: string | undefined;
   readonly instanceToken: string | undefined;
   /** The file the install command wrote the instance credential into, if there is one. */
   readonly instanceTokenPath: string | undefined;
@@ -199,6 +207,7 @@ export function loadStoreConfig(env: EnvSource = process.env): StoreConfig {
     storePublicUrl: value.STORE_PUBLIC_URL,
     baseHost: value.BASE_HOST,
     platformUrl: value.PLATFORM_URL,
+    fakeBankUrl: value.FAKE_BANK_URL,
     instanceToken: value.INSTANCE_TOKEN,
     instanceTokenPath: value.INSTANCE_TOKEN_PATH,
     internalToken: value.PLATFORM_INTERNAL_TOKEN,

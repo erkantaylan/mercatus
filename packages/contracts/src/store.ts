@@ -76,14 +76,41 @@ export const orderLineSchema = z.object({
 
 export const orderStatusSchema = z.enum(['placed', 'paid', 'cancelled']);
 
+/**
+ * Did this order get paid? It used to live only in the storefront process's memory, so it was
+ * lost on restart and never reached the merchant -- which is the one question a merchant
+ * dashboard exists to answer. `declined` is not `cancelled`: the order stands, the payment did
+ * not.
+ */
+export const orderPaymentStatusSchema = z.enum(['unpaid', 'paid', 'declined']);
+
 export const orderSchema = z.object({
   id: uuidSchema,
   /** Per-tenant and gapless. Tenant A's first order is 1 and so is tenant B's (BG2). */
   number: z.number().int().positive(),
   status: orderStatusSchema,
+  paymentStatus: orderPaymentStatusSchema,
+  /** The provider's own reference, so a bank record is findable from an order. */
+  paymentRef: z.string().nullable(),
+  paidAt: isoDateTimeSchema.nullable(),
   totalMinor: minorAmountSchema,
   currency: currencySchema,
   placedAt: isoDateTimeSchema,
+});
+
+/**
+ * `POST /t/:slug/orders/:id/payment` -- "the bank has settled this; go and read it".
+ *
+ * The body carries a payment ID and NOTHING ELSE that is believed. The store asks the bank
+ * itself and checks that the payment's reference names this order and its amount matches the
+ * order total, so the caller cannot assert an outcome -- which is why this route needs no
+ * credential and no shared HMAC secret on a box we do not own (CE2).
+ */
+export const settleOrderPaymentBodySchema = z.object({ paymentId: uuidSchema });
+
+export const settleOrderPaymentResultSchema = z.object({
+  orderId: uuidSchema,
+  paymentStatus: orderPaymentStatusSchema,
 });
 
 export const orderDetailSchema = orderSchema.extend({ lines: z.array(orderLineSchema) });
@@ -242,6 +269,7 @@ export type ProductList = z.infer<typeof productListSchema>;
 export type CreateProductBody = z.infer<typeof createProductBodySchema>;
 export type PatchProductBody = z.infer<typeof patchProductBodySchema>;
 export type Order = z.infer<typeof orderSchema>;
+export type OrderPaymentStatus = z.infer<typeof orderPaymentStatusSchema>;
 export type OrderLine = z.infer<typeof orderLineSchema>;
 export type OrderDetail = z.infer<typeof orderDetailSchema>;
 export type OrderList = z.infer<typeof orderListSchema>;

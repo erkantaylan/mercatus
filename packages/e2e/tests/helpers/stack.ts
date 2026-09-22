@@ -30,13 +30,17 @@ export const ENDPOINTS = {
 export const PLATFORM_PORT = 4001;
 
 /**
- * Where a hand-relaunched control plane records its pid.
+ * Where a hand-relaunched control plane records its pid, and the wrapper that makes it mortal.
  *
- * A process this suite starts is NOT Aspire-managed, so `aspire stop` will not take it down and
- * port 4001 stays held after the topology is gone. One file and one printed line is cheaper than
- * an orphan nobody can name.
+ * A process this suite starts is not Aspire-managed, so `aspire stop` used to report success and
+ * leave it holding port 4001 -- still answering /health with 200 while the Postgres it needs had
+ * been destroyed with the AppHost. It is now started under `supervised-relaunch.mjs`, which
+ * watches the pid that owned the original process (DCP) and terminates the child when that goes
+ * away. The pid file stays, because a named process is still cheaper to reason about than an
+ * anonymous one.
  */
 const RELAUNCH_PID_FILE = fileURLToPath(new URL('../../../../test-results/relaunched-platform.pid', import.meta.url));
+const SUPERVISOR = fileURLToPath(new URL('./supervised-relaunch.mjs', import.meta.url));
 
 /** The seeded pooled tenants (packages/db-store/src/seed.ts) and the dedicated one. */
 export const TENANTS = {
@@ -162,6 +166,8 @@ export async function staffOrderCount(storeApi: string, slug: string): Promise<n
 
 export interface CapturedProcess {
   readonly pid: number;
+  /** Who owned it -- DCP, under the AppHost. The relaunched copy dies when this one does. */
+  readonly ppid: number;
   readonly argv: readonly string[];
   readonly cwd: string;
   readonly env: Readonly<Record<string, string>>;
@@ -192,8 +198,11 @@ export function captureProcess(pid: number): CapturedProcess {
     const index = entry.indexOf('=');
     if (index > 0) env[entry.slice(0, index)] = entry.slice(index + 1);
   }
+  const status = readFileSync(`/proc/${String(pid)}/status`, 'utf8');
+  const ppid = Number(/^PPid:\s*(\d+)$/m.exec(status)?.[1] ?? '0');
   return {
     pid,
+    ppid,
     argv: nul(`/proc/${String(pid)}/cmdline`),
     // `/proc/<pid>/cwd` is a SYMLINK to a directory -- reading it is EISDIR, not a path.
     cwd: readlinkSync(`/proc/${String(pid)}/cwd`),
@@ -205,13 +214,27 @@ export function stopProcess(pid: number): void {
   process.kill(pid, 'SIGTERM');
 }
 
-/** Relaunch exactly what was captured, detached, so it outlives the test worker. */
+/**
+ * Relaunch exactly what was captured, detached, so it outlives the test worker -- and under a
+ * supervisor, so it does NOT outlive the AppHost.
+ *
+ * `aspire stop` cannot reap a process it did not start. Rather than asking an operator to
+ * remember a pid file, the child is started by `supervised-relaunch.mjs` with the original
+ * process's parent (DCP) as its watch target: when the AppHost goes, so does this.
+ */
 export function relaunch(captured: CapturedProcess): number {
   const [command, ...args] = captured.argv;
   if (command === undefined) throw new Error('nothing to relaunch: empty argv');
-  const child = spawn(command, args, {
+  // Which pid to watch. Normally the captured process's parent -- DCP, under the AppHost. But on
+  // a SECOND run of this suite the process on 4001 is already one of ours, and its parent is the
+  // previous supervisor, which exits the moment its child is killed. Watching that would make the
+  // relaunched control plane die about a second after it started, which is precisely how the
+  // second run failed before this line existed. The watch target is inherited instead, so every
+  // generation watches the same DCP.
+  const watchPid = captured.env['MERCATUS_WATCH_PID'] ?? String(captured.ppid);
+  const child = spawn(process.execPath, [SUPERVISOR, command, ...args], {
     cwd: captured.cwd,
-    env: { ...captured.env },
+    env: { ...captured.env, MERCATUS_WATCH_PID: watchPid },
     detached: true,
     stdio: 'ignore',
   });

@@ -17,7 +17,7 @@
 import type { BrowserContext, Page } from '@playwright/test';
 import { expect, test } from '@playwright/test';
 
-import { addToBasket, checkout, shot, signedInAs, signIn } from './helpers/shop.js';
+import { addToBasket, checkout, freshShopper, shot, signedInAs, signIn } from './helpers/shop.js';
 import type { CapturedProcess } from './helpers/stack.js';
 import {
   ENDPOINTS,
@@ -33,14 +33,22 @@ import {
   stopProcess,
 } from './helpers/stack.js';
 
-/** The same account as the pooled story. Same person, same phone, a different store's session. */
-const SHOPPER = { phone: '+905550000777', name: 'E2E Shopper' };
+/**
+ * A shopper minted for this run, and order counts taken relative to what zenith already held.
+ *
+ * This spec used to refuse to run unless zenith had exactly zero orders, because it asserted
+ * order 1 and order 2 -- so the outage demo could be performed exactly once per rebuilt AppHost
+ * B. The claim is the arithmetic (two more orders, numbered consecutively, one of them placed
+ * while the control plane was dark), not the literals.
+ */
+const SHOPPER = freshShopper('Zenith Shopper');
 const SLUG = TENANTS.zenith.slug;
 
-let context: BrowserContext;
+let context: BrowserContext | undefined;
 let page: Page;
 let dedicatedUp = false;
 let captured: CapturedProcess | null = null;
+let ordersBefore = 0;
 
 test.describe.configure({ mode: 'serial' });
 
@@ -49,14 +57,7 @@ test.describe('the dedicated instance keeps selling with the control plane down'
     dedicatedUp =
       (await reachable(ENDPOINTS.storeDedicated)) &&
       (await reachable(ENDPOINTS.storefrontDedicated, `/t/${SLUG}`));
-    if (dedicatedUp) {
-      // Same reason as the pooled spec: order 1 and order 2 are the assertions, so a re-used
-      // AppHost B is a clear message rather than an arithmetic surprise.
-      expect(
-        await staffOrderCount(ENDPOINTS.storeDedicated, SLUG),
-        'this spec needs a freshly started AppHost B',
-      ).toBe(0);
-    }
+    if (dedicatedUp) ordersBefore = await staffOrderCount(ENDPOINTS.storeDedicated, SLUG);
     context = await browser.newContext();
     page = await context.newPage();
   });
@@ -67,7 +68,9 @@ test.describe('the dedicated instance keeps selling with the control plane down'
       relaunch(captured);
       await expect.poll(() => reachable(ENDPOINTS.platform), { timeout: 60_000 }).toBe(true);
     }
-    await context.close();
+    // Optional chaining: a beforeAll that threw leaves this undefined, and the TypeError it
+    // raises here buries the failure that actually mattered.
+    await context?.close();
   });
 
   test('the same shopper signs in at the dedicated store', async () => {
@@ -93,8 +96,8 @@ test.describe('the dedicated instance keeps selling with the control plane down'
     const purchase = await checkout(page, ENDPOINTS.storefrontDedicated, SLUG);
 
     expect(purchase.payment).toBe('paid');
-    // Zenith's own counter. Its first order is 1, on its own database (BG2, CC2).
-    expect(purchase.number).toBe(1);
+    // Zenith's own counter, on its own database (BG2, CC2). On a fresh AppHost B that is 1.
+    expect(purchase.number).toBe(ordersBefore + 1);
     await shot(page, '17-zenith-order-paid');
   });
 
@@ -134,7 +137,7 @@ test.describe('the dedicated instance keeps selling with the control plane down'
     // the bank is still reachable, `unreachable` when it is not -- both are a completed checkout
     // as far as this store is concerned, and neither is an error a shopper can act on (CG1).
     expect(['paid', 'unreachable']).toContain(purchase.payment);
-    expect(purchase.number).toBe(2);
+    expect(purchase.number).toBe(ordersBefore + 2);
     await shot(page, '18-zenith-order-during-outage');
 
     // And the rest of the shop is untouched: browsing, the shopper's own orders, and the
@@ -153,11 +156,12 @@ test.describe('the dedicated instance keeps selling with the control plane down'
     expect(captured, 'the control plane was never captured').not.toBeNull();
 
     const pid = relaunch(captured as CapturedProcess);
-    // Say it out loud: this one is ours, not Aspire's, so `aspire stop` will leave it holding
-    // port 4001. The pid is also in test-results/relaunched-platform.pid.
+    // Ours, not Aspire's -- so it is started under a supervisor that watches DCP and terminates
+    // it when the AppHost stops. Without that, `aspire stop` reports success and leaves a control
+    // plane on 4001 answering /health with 200 over a database that no longer exists.
     process.stdout.write(
-      `\n  control plane relaunched by hand as pid ${String(pid)} -- kill it before/after ` +
-        '`aspire stop`, it is not Aspire-managed\n',
+      `\n  control plane relaunched as pid ${String(pid)}, supervised: it exits with the AppHost ` +
+        '(pid also in test-results/relaunched-platform.pid)\n',
     );
     await expect.poll(() => reachable(ENDPOINTS.platform), { timeout: 60_000 }).toBe(true);
 

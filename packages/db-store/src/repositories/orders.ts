@@ -141,6 +141,37 @@ export async function placeOrder(
   return { orderId: order.id, number, totalMinor, currency };
 }
 
+export interface SettlementInput {
+  readonly orderId: string;
+  readonly paymentStatus: 'paid' | 'declined';
+  readonly paymentRef: string;
+}
+
+/**
+ * What the bank said about an order, written where the merchant can see it.
+ *
+ * No tenant predicate and no `where tenant_id` (§3.5): the transaction is already scoped, so an
+ * order id belonging to another tenant matches zero rows and the caller gets a not-found. The
+ * order's own `status` follows `paid` so every existing surface shows it without a new column to
+ * read; a DECLINED payment leaves the order `placed`, because the order still stands.
+ */
+export async function recordSettlement(
+  tx: StoreTx,
+  input: SettlementInput,
+): Promise<OrderRow | null> {
+  const paid = input.paymentStatus === 'paid';
+  const updated = await tx
+    .update(orders)
+    .set({
+      paymentStatus: input.paymentStatus,
+      paymentRef: input.paymentRef,
+      ...(paid ? { status: 'paid' as const, paidAt: new Date() } : {}),
+    })
+    .where(eq(orders.id, input.orderId))
+    .returning();
+  return updated[0] ?? null;
+}
+
 /** For the telemetry batch (CE6). A count, never an order -- CI1 is a contract term, not a knob. */
 export async function countOrders(tx: StoreTx): Promise<number> {
   const counted = await tx.select({ total: sql<number>`count(*)::int` }).from(orders);

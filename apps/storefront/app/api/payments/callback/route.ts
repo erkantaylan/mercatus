@@ -11,7 +11,7 @@
  */
 import { z } from 'zod';
 
-import { recordCallback } from '@/lib/payments';
+import { recordCallback, settleWithStore } from '@/lib/payments';
 
 /**
  * fake-bank's callback body. Declared here rather than imported from @mercatus/contracts, which
@@ -39,6 +39,12 @@ export async function POST(request: Request): Promise<Response> {
     );
     return Response.json({ error: { code: 'UNAUTHENTICATED', message: 'Refused.' } }, { status: 401 });
   }
+
+  // The outcome is worthless while it lives only in this process's memory: the merchant never
+  // sees it and a restart loses it. Awaited, not fired and forgotten, so a failure is logged
+  // inside the request that caused it -- and it is swallowed, because the bank's callback must
+  // still be marked delivered whatever the store said.
+  if (result.record) await settleWithStore(result.record);
 
   // 204: the bank is not interested in a body, and an empty 2xx is what marks it delivered.
   return new Response(null, { status: 204 });

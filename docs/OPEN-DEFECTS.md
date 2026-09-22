@@ -1,8 +1,20 @@
 # Open defects
 
-Found by the independent RLS verifier during the overnight build. **Not yet fixed** — the schema
-still has single-column foreign keys. Fix after the build run completes, before trusting the
-isolation story.
+Found by the independent RLS verifier during the overnight build.
+
+**F1, F2 and F3 were fixed in task 12.1** (`fix: tenant-consistent foreign keys…`). Their entries
+are kept, with the fix recorded under each, because the shape of the mistake is worth more than
+the note that it is gone. F4 is informational and still true; F5 and F6 are still open and still
+minor.
+
+| | | |
+|---|---|---|
+| **F1** | cross-tenant denial of service through single-column FKs | ✅ fixed, with leak-suite cases |
+| **F2** | `tenants` readable with no tenant context | ✅ fixed, SECURITY DEFINER lookups |
+| **F3** | connect boundary one-directional | ✅ fixed, `revoke connect … from public` |
+| **F4** | control plane has no RLS | informational, unchanged |
+| **F5** | primary-key collision is an existence oracle | open, minor |
+| **F6** | a non-uuid `app.tenant_id` raises at query time | open, minor |
 
 ---
 
@@ -51,6 +63,27 @@ integrity.
 3. Add a leak-suite case. The existing 69 tests all pass and **none touch this path** — which is
    the point: a suite that is green against a real defect is exactly what `BL1` warns about.
 
+### ✅ Fixed — task 12.1
+
+`packages/db-store/src/schema.ts` now declares `unique (id, tenant_id)` on `orders`, `products`
+and `shoppers`, and all three foreign keys are composite:
+
+```
+order_lines (order_id, tenant_id)   -> orders   (id, tenant_id)
+order_lines (product_id, tenant_id) -> products (id, tenant_id)
+orders      (shopper_id, tenant_id) -> shoppers (id, tenant_id)
+```
+
+The migrations were **regenerated as one file** rather than patched: drizzle-kit emitted the new
+unique constraints *after* the foreign keys that reference them, which Postgres refuses, and
+hand-ordering generated SQL is what `J1` is about. Every database in this repo is created fresh
+per run, so a squash costs nothing.
+
+`packages/db-store/test/leak.test.ts` grew a `referential integrity is tenant-consistent (F1)`
+section: a **structural** case asserting that every foreign key in the live database carries
+`tenant_id` (so the next single-column FK fails a test rather than shipping), the three attack
+inserts, and the victim's half — borg deleting its own order and product afterwards.
+
 ---
 
 ## F2 — `tenants` table is readable with no tenant context
@@ -61,6 +94,26 @@ any code path holding a store connection can enumerate every merchant on the box
 
 **Fix.** A `SECURITY DEFINER` lookup function returning one row by slug, then revoke the direct
 `SELECT`.
+
+### ✅ Fixed — task 12.1
+
+`sql/02-rls.sql` revokes the table grant and creates three definer functions, each returning only
+what its caller needs:
+
+| | |
+|---|---|
+| `mercatus_tenant_by_slug(text)` | one row — the request's tenant candidate (§3.6) |
+| `mercatus_tenant_by_id(uuid)` | one row — the tenant the token already established |
+| `mercatus_tenant_directory()` | **id and slug only** — the pooled licence agent's poll list |
+
+The directory exists because the pooled agent must enumerate what the instance serves, and that
+list cannot come from an RLS-protected table: it *is* the set of contexts. It returns no name and
+no branding, so the bulk read of merchant data is gone even though enumeration remains.
+
+Each function pins `search_path` (without it the caller chooses which `tenants` the body reads)
+and has `EXECUTE` revoked from `PUBLIC`, which is granted by default and would otherwise be the
+leak. `repositories/tenants.ts` reads through them; the owner still uses the table directly, which
+is why the write helpers are unchanged.
 
 ---
 
@@ -74,6 +127,12 @@ Not a leak today (table grants still deny it), but any role later added to the c
 foothold in the data plane.
 
 **Fix.** Two lines in `db-store/sql/00-roles.sql` mirroring the platform file.
+
+### ✅ Fixed — task 12.1
+
+`revoke connect on database %I from public` now runs before the grants to `mercatus_owner` and
+`mercatus_app`, and the leak suite asserts it against the live database by counting `CONNECT`
+grants to grantee 0 (`PUBLIC`) in `pg_database.datacl`.
 
 ---
 

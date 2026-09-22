@@ -47,6 +47,7 @@ function OrdersPage() {
                   <th className="mc-num">#</th>
                   <th>Placed</th>
                   <th>Status</th>
+                  <th>Payment</th>
                   <th className="mc-num">Total</th>
                   <th />
                 </>
@@ -58,6 +59,16 @@ function OrdersPage() {
                   <td>{new Date(order.placedAt).toLocaleString()}</td>
                   <td>
                     <span className="mc-badge">{order.status}</span>
+                  </td>
+                  <td>
+                    {/*
+                      "Did this order get paid" is the one question this screen exists to answer,
+                      and until the store started recording settlements it could not: a paid order
+                      and an abandoned one looked identical here.
+                    */}
+                    <span className="mc-badge" data-payment={order.paymentStatus}>
+                      {order.paymentStatus === 'unpaid' ? 'awaiting payment' : order.paymentStatus}
+                    </span>
                   </td>
                   <td className="mc-num">
                     <Money minor={order.totalMinor} currency={order.currency} />

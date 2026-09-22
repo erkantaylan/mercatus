@@ -23,7 +23,9 @@ const nextConfig: NextConfig = {
   // handler is ever attached. The only symptom is that nothing on the page does anything, and
   // the one line that says why is in the dev server's own log, not the browser's console.
   // Everything in this repo is curled and driven at 127.0.0.1, so it is allowed here.
-  allowedDevOrigins: ['127.0.0.1'],
+  // `shop.localtest.me` is the same app through the edge on 8080, which is how the demo is meant
+  // to be reachable through one port.
+  allowedDevOrigins: ['127.0.0.1', 'shop.localtest.me', 'localtest.me'],
   transpilePackages: ['@mercatus/ui'],
 };
 

@@ -251,6 +251,10 @@ var storePooled = Node("store-pooled", "store", StorePooledPort)
     // no route in the other direction anywhere in this file.
     .WithEnvironment("PLATFORM_URL", platformBase)
     .WithEnvironment("PLATFORM_INTERNAL_TOKEN", PlatformInternalToken)
+    // Read-only, and not a credential. The store asks the bank whether a payment settled and
+    // records the answer, because "did this order get paid" is the one question the merchant
+    // dashboard exists to answer -- and it used to live only in the storefront's memory.
+    .WithEnvironment("FAKE_BANK_URL", fakeBankBase)
     // Five seconds, not the 10-second default: the demo flips a tenant to passive in the console
     // and the storefront has to refuse a checkout while somebody is still looking at the screen.
     .WithEnvironment("LICENCE_POLL_SECONDS", "5")
@@ -340,14 +344,17 @@ Web("storefront", "storefront", StorefrontPort, "node_modules/next/dist/bin/next
     .WithHttpHealthCheck("/t/acme")
     .WaitFor(storePooled);
 
+// 0.0.0.0, not 127.0.0.1: Traefik reaches these from inside a container over the docker host
+// gateway, and the demo is supposed to be reachable through ONE port (dash.localtest.me:8080,
+// console.localtest.me:8080). strictPort in each vite.config.ts is what keeps the number fixed.
 Web("dashboard", "dashboard", DashboardPort,
-        "node_modules/vite/bin/vite.js", "--host", "127.0.0.1")
+        "node_modules/vite/bin/vite.js", "--host", "0.0.0.0")
     .WithEnvironment("VITE_STORE_API_URL", storePooledBase)
     .WithHttpHealthCheck("/")
     .WaitFor(storePooled);
 
 Web("admin", "admin", AdminPort,
-        "node_modules/vite/bin/vite.js", "--host", "127.0.0.1")
+        "node_modules/vite/bin/vite.js", "--host", "0.0.0.0")
     .WithEnvironment("VITE_PLATFORM_URL", platformBase)
     .WithHttpHealthCheck("/")
     .WaitFor(platform);

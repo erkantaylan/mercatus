@@ -16,6 +16,10 @@ export default defineConfig({
   server: {
     port: 5174,
     strictPort: true,
+    // Reachable from the edge as `console.localtest.me:8080`, which means binding something the
+    // Traefik container can route to and accepting that Host header (lessons/05).
+    host: process.env['HOST'] ?? '127.0.0.1',
+    allowedHosts: ['.localtest.me'],
   },
   preview: {
     port: 5174,

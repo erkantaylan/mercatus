@@ -178,6 +178,11 @@ var store = Node("store-zenith", "store", StorePort,
     .WithEnvironment("BASE_HOST", "localtest.me")
     // CE4: this box PULLS. One URL out, no route in.
     .WithEnvironment("PLATFORM_URL", ControlPlaneUrl)
+    // Read-only, and NOT a credential: the store asks the bank whether a payment settled so the
+    // merchant's own dashboard can say whether an order was paid. It holds no HMAC secret, so
+    // nothing here can create a payment or sign anything (CE2). The storefront beside it still
+    // does, which is the compromise named above.
+    .WithEnvironment("FAKE_BANK_URL", FakeBankUrl)
     // ... with the credential it minted for itself at registration. There is no
     // PLATFORM_INTERNAL_TOKEN on this resource and there must never be one (CE1).
     .WithEnvironment("INSTANCE_TOKEN_PATH", instanceTokenPath)
@@ -188,6 +193,7 @@ var store = Node("store-zenith", "store", StorePort,
     .WithHttpHealthCheck("/health")
     .WithReference(dbZenith)
     .WithReference(controlPlane)
+    .WithReference(fakeBank)
     .WithReference(identity)
     .WaitFor(dbZenith)
     .WaitForCompletion(provision);

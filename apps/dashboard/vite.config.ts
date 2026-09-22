@@ -28,5 +28,12 @@ export default defineConfig({
     // rather than a silent move to another one that nothing else is configured for.
     port: Number(process.env['PORT'] ?? 5173),
     strictPort: true,
+    // Traefik reaches this from INSIDE a container over the docker host gateway, so a listener
+    // on 127.0.0.1 is not reachable from the edge (lessons/05). strictPort is what keeps 5173
+    // meaning 5173; the bind address is a separate question.
+    host: process.env['HOST'] ?? '127.0.0.1',
+    // Vite refuses a request whose Host header it does not recognise. `dash.localtest.me` is
+    // this same dev server through the edge on 8080.
+    allowedHosts: ['.localtest.me'],
   },
 });

@@ -20,6 +20,21 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
+    // Plain node scripts that are spawned rather than imported (no tsx, no build). `no-undef` is
+    // off for TypeScript files because typescript-eslint turns it off; these need the globals
+    // declared instead.
+    files: ['**/*.mjs'],
+    languageOptions: {
+      globals: {
+        process: 'readonly',
+        setInterval: 'readonly',
+        clearInterval: 'readonly',
+        setTimeout: 'readonly',
+        console: 'readonly',
+      },
+    },
+  },
+  {
     files: ['**/*.ts', '**/*.tsx'],
     rules: {
       // A type-only import that survives to runtime pulls a package into a bundle that did not

@@ -31,6 +31,19 @@ export interface Shopper {
   readonly name: string;
 }
 
+/**
+ * A shopper who has never shopped here before, minted per run.
+ *
+ * "This shopper has 1 order at this store" is an assertion about a PERSON, not about the
+ * database, so it holds on the tenth run as well as the first -- which is the whole difference
+ * between a suite you can re-run and one that needs the stack destroyed and rebuilt first. The
+ * phone is the identity the storefront signs in with, so a fresh one is a fresh shopper row.
+ */
+export function freshShopper(label: string): Shopper {
+  const digits = String(Math.floor(Math.random() * 9_000_000) + 1_000_000);
+  return { phone: `+9055${digits}`, name: `E2E ${label}` };
+}
+
 /** The readable half of the session, as the browser holds it. The token beside it is httpOnly. */
 async function sessionPhone(page: Page): Promise<string | null> {
   const found = (await page.context().cookies()).find((c) => c.name === 'mercatus_shopper_phone');

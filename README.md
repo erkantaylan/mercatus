@@ -106,7 +106,7 @@ differ architecturally:
 
 | Tier | Address | Data | In the POC |
 |---|---|---|---|
-| 1 — pooled, path | `platform.localtest.me/shop/acme` | shared DB, RLS | ✅ |
+| 1 — pooled, path | `shop.localtest.me:8080/t/acme` | shared DB, RLS | ✅ |
 | 2 — pooled, custom domain | `acme.com` → our edge | shared DB, RLS | designed, not built |
 | 3 — dedicated | `acme.localtest.me`, their server | own DB, one tenant | ✅ |
 
@@ -199,12 +199,34 @@ says it explicitly. The two dashboards are on **15230** (A) and **15240** (B), e
 one-time login token on start — B's OTLP and resource-service ports are moved in its
 `apphost.run.json`, or the two collide.
 
-B needs A running the first time only: it presents a one-time bootstrap token to
+B needs A running when it starts: it presents a one-time bootstrap token to
 `POST /installations/register`, is given a per-instance credential (`CE1`) which it writes to
-`.instance/zenith.json`, and never needs the bootstrap token again. B's application model
-contains no control-plane database — it reaches A only through `AddExternalService`, over
+`.instance/zenith.json`, and polls with that from then on. B's application model contains no
+control-plane database — it reaches A only through `AddExternalService`, over
 `platform.localtest.me:8080` and `bank.localtest.me:8080`. `*.localtest.me` resolves to
 `127.0.0.1` without touching `/etc/hosts`.
+
+**`aspire stop` on A destroys A's database with it**, so a rebuilt control plane has never heard
+of that installation. B's install command therefore *checks* its credential on every start and
+re-registers when the control plane refuses it — the dev bootstrap token is re-seeded unspent on
+every fresh platform database, so restarting B after rebuilding A is one command and no hand
+editing. (Until this was fixed the box kept polling with a dead token, got 401 for ever, and
+reported itself healthy the whole time.) An unreachable control plane is *not* a refusal: B keeps
+its credential and boots anyway (`CG1`).
+
+**Everything of A's answers on one port**, 8080, through the edge — one hostname per surface,
+all of them `*.localtest.me`, which resolves to loopback with no `/etc/hosts` entry:
+
+| Through the edge, port 8080 | |
+|---|---|
+| `shop.localtest.me/t/acme`, `/t/borg` | tier 1 storefronts, pooled |
+| `dash.localtest.me` | merchant dashboard, pooled |
+| `console.localtest.me` | platform console |
+| `platform.localtest.me` | the control plane API |
+| `bank.localtest.me` | fake-bank |
+| `api.localtest.me`, and anything unmatched | the pooled store API |
+
+The direct ports are still there, and are what the e2e suite drives:
 
 | | |
 |---|---|
@@ -212,11 +234,21 @@ contains no control-plane database — it reaches A only through `AddExternalSer
 | `127.0.0.1:3002` | tier 3 storefront — Zenith, on "their server" |
 | `127.0.0.1:5173` · `5175` | merchant dashboard, pooled · dedicated |
 | `127.0.0.1:5174` | platform console |
-| `platform.localtest.me:8080` · `bank.localtest.me:8080` | the control plane through our edge |
+| `127.0.0.1:4001` · `4002` · `4003` · `4004` | platform · store-pooled · store-zenith · fake-bank |
 
-AppHost **B** runs its own storefront and dashboard as resources. AppHost **A** does not yet run
-the pooled storefront, dashboard or platform console — tasks 07a–07c left them out of the
-application model, so start those by hand with the environment listed in their diary entries.
+One `aspire run` in `aspire/AppHostA` starts all of A — the control plane, the pooled store, the
+storefront, the dashboard, the console, identity and the edge. AppHost **B** starts its own
+store, storefront and dashboard. Nothing has to be started by hand.
+
+**Which identity the stack runs on.** `aspire run` defaults the data plane to the **stub** auth
+adapter, because the dashboard, the console and the storefront all sign in through `/dev/login/*`,
+which exists only while the stub is the adapter (it refuses to construct under
+`NODE_ENV=production`). `MERCATUS_AUTH_ADAPTER=oidc aspire run …` swaps the whole data plane onto
+Logto and nothing else about the topology changes (`CC1`). Be honest about the coverage: the
+end-to-end suite drives the **stub**, so headline #3 is demonstrated by
+`packages/identity/scripts/login-round-trip.sh` (task 08's gate — a real authorization-code flow,
+driven with curl) and not by `pnpm test:e2e`. Logto is started, health-checked and bootstrapped on
+every run regardless, which costs a container and a bootstrap step.
 
 **The demo.** With both up, buy something on `127.0.0.1:3002`. Then
 `cd aspire/AppHostA && aspire stop` — the whole control plane, not a resource — and buy again.

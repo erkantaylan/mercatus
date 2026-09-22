@@ -666,3 +666,63 @@ file is where they are amended.
   first order is also 1" is the visible half of BG2 and is worth more than a re-runnable suite.
 - **Screenshots and the HTML report go to the repo root and are gitignored.** `test-results/` is
   evidence on disk for the morning, not repository content.
+
+---
+
+## Task 12.1 — the repair pass
+
+Decisions the design docs did not make, taken while fixing the acceptance findings.
+
+- **Grace is earned by a success.** An instance that has never once reached the control plane gets
+  a boot allowance of three poll intervals and then goes `read_only` — no grace window at all.
+  Reason: the window exists to cover *our* outage for a box that was licensed and lost contact; a
+  box that has never authenticated has earned nothing, and 72 hours of open checkout for it is a
+  hole rather than a courtesy (`CG1`, `CG2`).
+- **`licence_state.polling_since`** is the anchor that makes that decidable: first poll attempt
+  ever, successful or not, never cleared. Without it "never polled" and "polling and always
+  refused" are the same row, and the second one sold for ever.
+- **`recordLicenceAttempt` upserts.** It was an `UPDATE` with no row to update, so the exact
+  instance that needed the record — one whose first registration failed — wrote nothing on every
+  failed poll. The inserted row keeps the default `status = 'active'`, because a failed poll has
+  learnt nothing about the tenant's own standing (`CG3`); what closes the shop is the age of
+  `polling_since`, not a status this code invented.
+- **`provision` verifies its credential and re-registers when the control plane refuses it.**
+  Idempotent-and-resumable (`CK2`) used to mean "a credential file exists, skip"; after `aspire
+  stop` on AppHost A that file names an installation the rebuilt control plane has never heard of.
+  Unreachable is deliberately *not* a refusal — only 401/403/404 re-register, anything else keeps
+  the credential and boots (`CG1`).
+- **The edge fronts every surface, one hostname each.** `shop.` / `dash.` / `console.` /
+  `api.localtest.me` join `platform.` and `bank.`, and the two Vite dev servers bind `0.0.0.0`
+  with `allowedHosts: ['.localtest.me']` so Traefik can reach them from inside its container. The
+  store API keeps the catch-all, so host-based tenant resolution (`acme.localtest.me`) is still
+  exercised through the edge. README's `platform.localtest.me/shop/acme` never existed and is now
+  `shop.localtest.me:8080/t/acme`.
+- **The settlement is recorded by the STORE, from the bank, not asserted by the storefront.**
+  `POST /t/:slug/orders/:id/payment` takes a payment id and nothing it believes: the store fetches
+  that payment from fake-bank and accepts it only if its `reference` names this order and its
+  amount matches the total. So no bank HMAC secret is added to the store — including on a box
+  whose owner has root (`CE2`) — and no inbound path is created (`CE4`). `orders` gained
+  `payment_status`, `payment_ref` and `paid_at`; a paid payment also moves `orders.status` to
+  `paid` so existing screens show it. The storefront's in-memory ledger stays as the fast path and
+  forwards every settled outcome.
+- **`declined` is not `cancelled`.** A declined payment leaves the order `placed`. The order
+  exists; the money did not arrive.
+- **The e2e suite asserts arithmetic, not literals.** Order-number assertions are relative to what
+  each store already held, and each spec mints its own shopper, so the suite is re-runnable
+  against a stack that has served real traffic. It no longer aborts on "this needs a freshly
+  started AppHost".
+- **The relaunched control plane is supervised rather than orphaned.** `03-dedicated-outage`
+  restarts the platform under `supervised-relaunch.mjs`, which watches DCP's pid and terminates
+  the child when the AppHost stops. `aspire stop` cannot reap a process it did not start, and a
+  control plane answering `/health` 200 over a destroyed database is worse than a dead port. The
+  watch target is *inherited* on a re-run, or the second run kills its own relaunch.
+- **The migration history was squashed to one generated file.** drizzle-kit emitted the new unique
+  constraints after the foreign keys that reference them, which Postgres refuses; every database
+  here is created fresh per run, so regenerating beats hand-ordering generated SQL (`J1`).
+- **`apps/platform` and `apps/store` own their test Postgres**, through new
+  `@mercatus/db-platform/testing` and `@mercatus/db-store/testing` exports. The environment
+  variables that used to gate them are gone from `turbo.json`'s `test` task.
+- **The stray `mercatus-dash-gate-pg` container was removed.** It was task 07b's hand-started gate
+  database, left running on `0.0.0.0:55432` since 05:33 and recorded twice as "left as found".
+  Nothing needs it; lessons/07b says how to start another.
+

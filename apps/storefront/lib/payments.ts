@@ -21,6 +21,13 @@
  * that is the right size for it: the authority on whether a payment settled is fake-bank, which
  * this module asks whenever the ledger has nothing (`paymentState`). The ledger exists so the
  * VERIFIED callback is what normally answers, rather than a poll that would believe anything.
+ *
+ * It is NOT, however, the record of the fact. Until an outcome reaches the STORE it is invisible
+ * to the merchant -- a paid order looked exactly like an abandoned one in the dashboard, and the
+ * fact died with this process. So every settled outcome is forwarded to
+ * `POST /t/:slug/orders/:id/payment`, which asks the bank itself before believing it
+ * (`settleWithStore` below). This module asserts nothing to the store; it only points at a
+ * payment id.
  */
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
@@ -179,7 +186,7 @@ export function recordCallback(body: {
   amountMinor: number;
   currency: string;
   signature: string;
-}): { accepted: boolean; reason?: string } {
+}): { accepted: boolean; reason?: string; record?: PaymentRecord } {
   const { fakeBankHmacSecret } = config();
   const expected = sign(
     fakeBankHmacSecret,
@@ -202,7 +209,36 @@ export function recordCallback(body: {
 
   record.outcome = body.status;
   record.source = 'callback';
-  return { accepted: true };
+  return { accepted: true, record };
+}
+
+/**
+ * Tell the store what the bank did, so the merchant can see it.
+ *
+ * It sends a payment ID and nothing else the store believes: the store asks the bank and checks
+ * that the payment's reference names that order and that the amount matches, so this call cannot
+ * assert an outcome. Failure is logged and swallowed -- the shopper's confirmation page must not
+ * fail because a dashboard column could not be updated, and the next `paymentState` poll tries
+ * again.
+ */
+export async function settleWithStore(record: PaymentRecord): Promise<void> {
+  if (record.paymentId === '') return;
+  if (record.outcome !== 'paid' && record.outcome !== 'declined') return;
+  const { storeApiUrl } = config();
+  const url = `${storeApiUrl}/t/${record.slug}/orders/${record.orderId}/payment`;
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify({ paymentId: record.paymentId }),
+      cache: 'no-store',
+    });
+    if (!response.ok) {
+      console.warn(`[storefront] the store refused a settlement for ${record.orderId}: ${String(response.status)}`);
+    }
+  } catch (error) {
+    console.warn(`[storefront] could not reach the store to settle ${record.orderId}: ${String(error)}`);
+  }
 }
 
 /**
@@ -231,6 +267,9 @@ export async function paymentState(
     if (bank.status === 'paid' || bank.status === 'declined') {
       record.outcome = bank.status;
       record.source = 'bank';
+      // The callback may never have arrived -- a dropped connection, a restarted storefront.
+      // The merchant's copy is the one that matters, so it is written from here too.
+      await settleWithStore(record);
     }
   } catch {
     // The bank being unreachable is not an outcome. Stay pending and let the page say so.
