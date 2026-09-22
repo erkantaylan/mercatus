@@ -276,9 +276,23 @@ Everything about that box derives from the slug -- the Aspire resource names, it
 container and database, `.instance/<slug>.json`, `.identity/store-<slug>.json`, the storefront's
 `.next-<slug>` build directory, its dev bootstrap token and `.stack/apphost-<slug>.json`. The
 tenant's display NAME is not in the AppHost at all: the control plane says what it is in the
-registration answer and the install command mirrors it. Two of these at once take
-`aspire run --isolated` for the second, which randomises the three CLI ports in
-`apphost.run.json`; nothing else collides.
+registration answer and the install command mirrors it.
+
+**Two dedicated instances at the same time** need one thing more, and it is the Aspire CLI's, not
+ours: a running AppHost is a singleton keyed on the path of its apphost file, so a second
+`aspire run` on `aspire/AppHostB/apphost.cs` stops the first -- with `--isolated` and all. The CLI
+says so itself, and says what to do: *"To run multiple isolated instances simultaneously, run from
+different directories."* So each extra instance gets a generated directory of its own:
+
+```bash
+# zenith the everyday way, orion beside it
+cd aspire/AppHostB && aspire run --detach --non-interactive --nologo --format Json
+aspire/scripts/run-dedicated.sh orion "$BOOTSTRAP_TOKEN"      # and stop-dedicated.sh orion
+```
+
+`aspire/AppHostB-<slug>/` is rewritten from `aspire/AppHostB/apphost.cs` on every run and is
+gitignored: a build artifact, not a second copy to keep in step. `--isolated` is still needed --
+it randomises the three CLI ports in `apphost.run.json` -- it simply is not sufficient.
 
 `packages/e2e/tests/helpers/stack.ts` globs `.stack/apphost-*.json` and drives whatever it finds;
 an instance with no file is one that is not up, which is exactly what makes its spec skip. Both
@@ -355,12 +369,20 @@ platform **process** instead of the AppHost (`ss -ltnp | grep ":$(jq -r '.endpoi
 not restart it, A's database survives, and B recovers on its own within one poll. That is what
 `packages/e2e/tests/03-dedicated-outage.spec.ts` does.
 
+**Four merchants at once** is `packages/e2e/tests/04-two-dedicated-tenants.spec.ts`: two pooled
+tenants and TWO dedicated ones serving together, one shopper account buying at all four, each
+merchant seeing only its own orders, and then the control plane stopped with BOTH dedicated stores
+still completing a checkout. It skips unless both instances published an address book, so it is
+the phase-3 demo and not a tax on the everyday loop. A dedicated instance is driven at
+`<slug>.localtest.me:<port>` there, because a cookie is scoped by host and ignores the port --
+several storefronts on `localhost` share one jar and overwrite each other's shopper session.
+
 **The checks.**
 
 ```bash
 pnpm -r test                    # 261 tests, 0 skipped, no stack needed
 pnpm turbo run typecheck lint   # 26 tasks
-pnpm test:e2e                   # 16 Playwright tests in real Chrome -- needs both AppHosts up
+pnpm test:e2e                   # 22 Playwright tests in real Chrome -- needs AppHost A up
 ```
 
 `packages/e2e` declares no `test` script, so `pnpm -r test` covers **13 of the 14** workspace

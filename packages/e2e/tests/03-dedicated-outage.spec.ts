@@ -30,6 +30,7 @@ import {
   probe,
   reachable,
   relaunch,
+  sellableProduct,
   staffOrderCount,
   stopProcess,
 } from './helpers/stack.js';
@@ -102,7 +103,7 @@ test.describe('the dedicated instance keeps selling with the control plane down'
   test('buys from the dedicated store, control plane up', async () => {
     test.skip(!dedicatedUp, `no dedicated instance is serving ${SLUG}`);
 
-    const title = await firstProductTitle(ZENITH.store, SLUG);
+    const title = await sellableProduct(ZENITH.store, SLUG);
     await addToBasket(page, ZENITH.storefront, SLUG, title);
     const purchase = await checkout(page, ZENITH.storefront, SLUG);
 
@@ -140,7 +141,7 @@ test.describe('the dedicated instance keeps selling with the control plane down'
     test.skip(!dedicatedUp, `no dedicated instance is serving ${SLUG}`);
     expect(await reachable(ENDPOINTS.platform)).toBe(false);
 
-    const title = await firstProductTitle(ZENITH.store, SLUG);
+    const title = await sellableProduct(ZENITH.store, SLUG);
     await addToBasket(page, ZENITH.storefront, SLUG, title);
     const purchase = await checkout(page, ZENITH.storefront, SLUG);
 
@@ -188,14 +189,3 @@ test.describe('the dedicated instance keeps selling with the control plane down'
     await shot(page, '20-zenith-recovered');
   });
 });
-
-/** The dedicated catalogue is seeded by the install command, so its titles are not in the seed. */
-async function firstProductTitle(storeApi: string, slug: string): Promise<string> {
-  const response = await fetch(`${storeApi}/t/${slug}/products`, {
-    signal: AbortSignal.timeout(10_000),
-  });
-  const { items } = (await response.json()) as { items: { title: string; stock: number }[] };
-  const sellable = items.find((item) => item.stock > 0);
-  if (!sellable) throw new Error(`${slug} has nothing in stock`);
-  return sellable.title;
-}

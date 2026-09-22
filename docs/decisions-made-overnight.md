@@ -883,3 +883,60 @@ Decisions taken while putting the dedicated instance on Logto ahead of any regis
   shared dashboard's PATCH returned 500" tells a first-time box it has no issuer client while the
   operator sees a clean registration -- and the application id was never written down, so the
   client secret could never be revoked. The id is now written the moment the client exists.
+
+## v2.0.0 phase 3 — a second dedicated tenant, proved
+
+- **`orion` was bought through the control plane's own API, not seeded.** `POST /tenants` (tier
+  `dedicated`) → `POST /tenants/:slug/activate` → `POST /installations {tenantSlug, expectedHost}`,
+  all against a stack that was already running, with zero edits to AppHost A and no new row in
+  `seed-dedicated.ts`. Extending the seed was the other option in the brief and was deliberately
+  not taken: a seed entry per tenant is the per-tenant edit v2.0.0 exists to delete, and the
+  operator path is two curls. `POST /signup` is the product's front door and also works; it leaves
+  the tenant `pending` until a fake-bank round trip settles, which is a browser in the loop for no
+  extra proof.
+- **The control plane CREATES the Logto organization at registration
+  (`ensureOrganizationBySlug`).** `IdentityProvisioner.provision()` only looked one up, and
+  `bootstrap.ts` makes organizations for `IDENTITY_TENANT_SLUGS` — a development literal fixed at
+  AppHost A's startup. So every tenant bought after A started registered with
+  `organizationId: null` and its merchant could never be recognised as its own staff. The
+  alternative on the table was having AppHost A pass the slug list; that is the advance knowledge
+  v2.0.0 was built to delete, one layer up, and it would have made a new tenant an edit to A
+  again. Creating it on the registration path keeps the handshake the only thing a new tenant
+  needs. It is idempotent and tolerates a race (Logto rejects the duplicate name; we look again).
+  It does NOT create a staff user or an organization membership — see lessons/17.
+- **Two AppHost Bs at once need two DIRECTORIES, and that is the Aspire CLI's rule, not ours.**
+  A running AppHost is a singleton keyed on the path of its apphost file: every `aspire run`
+  stops the previous instance of the same path, `--isolated` included. The CLI says so itself
+  ("run from different directories such as git worktree directories"). `--isolated` is still
+  required — it randomises the three CLI ports in `apphost.run.json` — it is just not sufficient.
+  Phase 2's note that `--isolated` alone would do it was wrong, and the README said so; both are
+  corrected.
+- **The per-instance run directory is GENERATED, not committed.** `aspire/scripts/run-dedicated.sh
+  <slug>` writes `aspire/AppHostB-<slug>/` from `aspire/AppHostB/apphost.cs` on every run and it
+  is gitignored: a build artifact with one source of truth, not a second AppHost to keep in step.
+  A sibling of `AppHostB`, because apphost.cs reaches the repo root with a relative `../..`.
+  Two mechanics made a naive version fail silently: a symlink is resolved back to the canonical
+  path by the CLI, and `dotnet run --file` keys its build output on the file's CONTENT, so two
+  byte-identical apphosts share one compiled binary directory and the second run tears down the
+  first one's process with no message. The generated file therefore ends with a comment naming its
+  tenant — that one line is what makes it a different application to build.
+- **A dedicated instance is DRIVEN at a hostname of its own, `<slug>.localtest.me:<port>`.**
+  Cookies are scoped by host and ignore the port, so N storefronts on `localhost` are one jar: the
+  second sign-in overwrites the first store's session token, and phase 2 correctly gave every box
+  its own `AUTH_STUB_SECRET`, so the survivor is a token the other store refuses. It surfaced as
+  orion's Pay button doing nothing under a page that still said "Buying as +90…". The change is in
+  the e2e helpers plus `'*.localtest.me'` in the storefront's `allowedDevOrigins`; nothing in the
+  running applications needed it, because a real deployment gives each box a hostname. The
+  alternative -- a browser context per storefront -- would have hidden the collision rather than
+  removed it, and "one shopper account, four shops" is worth asserting in one jar.
+- **Every spec now asks the store what it can sell instead of naming a seeded product.**
+  `sellableProduct(storeApi, slug)` in the e2e helpers, used by `01`, `03` and `04`. Naming a
+  seeded title made the suite re-runnable in its arithmetic (order counts are relative) but not in
+  its stock: `01` buys one `Rocket Skates` per run and the run that takes the last one fails the
+  next spec on a perfectly healthy stack, with a click loop that times out saying nothing. It also
+  removes the copy of that lookup that `03` and `04` each carried.
+- **The phase-3 gate is a spec, not a transcript.** `packages/e2e/tests/04-two-dedicated-tenants.spec.ts`
+  asserts four merchants serving at once, one shopper account buying at all four, each merchant
+  seeing only its own orders, and BOTH dedicated stores completing a checkout with the control
+  plane stopped. It skips itself unless both `.stack/apphost-zenith.json` and
+  `.stack/apphost-orion.json` are answering, exactly as `03` skips without one.

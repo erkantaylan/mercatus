@@ -27,7 +27,7 @@ import {
   installationApplicationName,
   deleteApplication,
   ensureInstallationClient,
-  findOrganizationIdBySlug,
+  ensureOrganizationBySlug,
   LogtoManagementClient,
   reconcileRedirectUris,
   APPLICATION_NAMES,
@@ -266,11 +266,16 @@ export class IdentityProvisioner {
       warnings,
     );
 
+    // CREATED when it is not there, not merely looked up (phase 3). An organization IS a tenant
+    // (CD3), and a tenant bought after AppHost A started has none: the bootstrap makes one per
+    // slug in a list fixed at A's startup. Settling for `null` here is what made the second
+    // dedicated tenant a tenant whose merchant could never be recognised as its staff -- and
+    // teaching A the list instead would put back exactly the advance knowledge v2.0.0 deletes.
     let organizationId: string | null = null;
     try {
-      organizationId = await findOrganizationIdBySlug(client, input.tenantSlug);
+      organizationId = await ensureOrganizationBySlug(client, input.tenantSlug);
     } catch (error) {
-      warnings.push(`organization lookup for ${input.tenantSlug} failed: ${message(error)}`);
+      warnings.push(`organization for ${input.tenantSlug} could not be resolved: ${message(error)}`);
     }
 
     return {

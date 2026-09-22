@@ -221,3 +221,43 @@ export async function findOrganizationIdBySlug(
   const organizations = await client.get<{ id: string; name: string }[]>('/organizations');
   return organizations.find((org) => org.name === slug)?.id ?? null;
 }
+
+/**
+ * The same lookup, and it CREATES the organization when the issuer has never heard of this
+ * tenant (v2.0.0 phase 3).
+ *
+ * A tenant that was bought after AppHost A started -- which is every tenant, in the product --
+ * has no organization at the issuer: `bootstrap.ts` makes one per slug in `IDENTITY_TENANT_SLUGS`
+ * and that list is a development literal fixed at A's startup. Looking one up and settling for
+ * `null` handed the instance an identity cache with an empty organization directory, so the box
+ * could verify a user's token and never an organization's: its merchant could not be recognised
+ * as staff of their own store. The blocker was measured on `orion`, the second dedicated tenant.
+ *
+ * Creating it HERE is what keeps "a new dedicated tenant is zero edits to AppHost A" true. The
+ * alternative -- teaching A the list of slugs -- is the coupling v2.0.0 exists to delete, one
+ * layer up: A would again have to know a tenant before that tenant existed.
+ *
+ * Idempotent (CK2), and racing is harmless: two registrations at once may both POST, and Logto
+ * answers the loser 4xx on the unique name, so we look again rather than propagate it.
+ */
+export async function ensureOrganizationBySlug(
+  client: LogtoManagementClient,
+  slug: string,
+): Promise<string> {
+  const existing = await findOrganizationIdBySlug(client, slug);
+  if (existing !== null) return existing;
+  try {
+    const created = await client.post<{ id: string }>('/organizations', {
+      name: slug,
+      description: `Mercatus tenant ${slug}`,
+      // Our own tenant id is deliberately absent: Logto generates the organization id and the
+      // control plane minted the tenant id (BV1). The slug is the join, and it is the name.
+      customData: { slug },
+    });
+    return created.id;
+  } catch (error) {
+    const raced = await findOrganizationIdBySlug(client, slug);
+    if (raced !== null) return raced;
+    throw error;
+  }
+}

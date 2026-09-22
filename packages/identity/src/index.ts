@@ -27,6 +27,7 @@ export {
   installationApplicationName,
   deleteApplication,
   ensureInstallationClient,
+  ensureOrganizationBySlug,
   findApplicationByName,
   findOrganizationIdBySlug,
   reconcileRedirectUris,

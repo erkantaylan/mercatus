@@ -32,7 +32,7 @@ import {
   signInToDashboard,
   signOutOfDashboard,
 } from './helpers/shop.js';
-import { ENDPOINTS, TENANTS, staffOrderCount } from './helpers/stack.js';
+import { ENDPOINTS, TENANTS, sellableProduct, staffOrderCount } from './helpers/stack.js';
 
 /**
  * A NEW shopper every run, and every count below is relative to what the stores already held.
@@ -47,9 +47,13 @@ import { ENDPOINTS, TENANTS, staffOrderCount } from './helpers/stack.js';
  */
 const SHOPPER = freshShopper('Shopper');
 
-/** Named products, so an assertion says which merchant's stock it is looking at. */
-const ACME_PRODUCT = 'Rocket Skates';
-const BORG_PRODUCT = 'Ocular Implant';
+/**
+ * One product per merchant, so an assertion can say whose stock it is looking at -- CHOSEN at run
+ * time, not named here. This file buys one of acme's every run, and the run that took the last
+ * `Rocket Skates` failed it on a stack that was perfectly healthy: the card loses its `Add to
+ * basket` button and the click loop times out saying nothing useful. Filled in `beforeAll`.
+ */
+const product: { acme: string; borg: string } = { acme: '', borg: '' };
 
 interface Placed {
   readonly orderId: string;
@@ -70,6 +74,8 @@ test.describe('one shopper, two pooled merchants', () => {
   test.beforeAll(async ({ browser }) => {
     before.acme = await staffOrderCount(ENDPOINTS.storePooled, TENANTS.acme.slug);
     before.borg = await staffOrderCount(ENDPOINTS.storePooled, TENANTS.borg.slug);
+    product.acme = await sellableProduct(ENDPOINTS.storePooled, TENANTS.acme.slug);
+    product.borg = await sellableProduct(ENDPOINTS.storePooled, TENANTS.borg.slug);
 
     context = await browser.newContext();
     page = await context.newPage();
@@ -94,7 +100,7 @@ test.describe('one shopper, two pooled merchants', () => {
   });
 
   test('buys from pooled tenant acme', async () => {
-    await addToBasket(page, ENDPOINTS.storefront, TENANTS.acme.slug, ACME_PRODUCT);
+    await addToBasket(page, ENDPOINTS.storefront, TENANTS.acme.slug, product.acme);
     await shot(page, '02-acme-catalog');
 
     const purchase = await checkout(page, ENDPOINTS.storefront, TENANTS.acme.slug);
@@ -110,7 +116,7 @@ test.describe('one shopper, two pooled merchants', () => {
     await page.goto(`${ENDPOINTS.storefront}/t/${TENANTS.borg.slug}`);
     expect(await signedInAs(page)).toBe(SHOPPER.phone);
 
-    await addToBasket(page, ENDPOINTS.storefront, TENANTS.borg.slug, BORG_PRODUCT);
+    await addToBasket(page, ENDPOINTS.storefront, TENANTS.borg.slug, product.borg);
 
     // The checkout page offers no phone field at all: the httpOnly cookie is the identity.
     await page.goto(`${ENDPOINTS.storefront}/t/${TENANTS.borg.slug}/checkout`);
@@ -158,15 +164,15 @@ test.describe('one shopper, two pooled merchants', () => {
     await shot(page, '08-dashboard-acme-orders');
 
     await page.getByRole('link', { name: 'Lines' }).first().click();
-    await expect(page.locator('table')).toContainText(ACME_PRODUCT);
-    await expect(page.locator('table')).not.toContainText(BORG_PRODUCT);
+    await expect(page.locator('table')).toContainText(product.acme);
+    await expect(page.locator('table')).not.toContainText(product.borg);
 
     // Borg's order id, asked for with acme's tenant-scoped token. RLS makes the row invisible
     // inside acme's transaction, so the API answers 404 -- not 403, which would confirm it
     // exists (S1).
     await page.goto(`${ENDPOINTS.dashboard}/orders/${borgOrderId}`);
     await expect(page.getByText('Not found.')).toBeVisible();
-    await expect(page.locator('body')).not.toContainText(BORG_PRODUCT);
+    await expect(page.locator('body')).not.toContainText(product.borg);
     await shot(page, '09-dashboard-acme-cannot-see-borg');
   });
 
@@ -181,13 +187,13 @@ test.describe('one shopper, two pooled merchants', () => {
     await page.goto(`${ENDPOINTS.dashboard}/orders`);
     await expect(page.locator('table tbody tr')).toHaveCount(before.borg + 1);
     await page.getByRole('link', { name: 'Lines' }).first().click();
-    await expect(page.locator('table')).toContainText(BORG_PRODUCT);
-    await expect(page.locator('table')).not.toContainText(ACME_PRODUCT);
+    await expect(page.locator('table')).toContainText(product.borg);
+    await expect(page.locator('table')).not.toContainText(product.acme);
     await shot(page, '10-dashboard-borg-orders');
 
     await page.goto(`${ENDPOINTS.dashboard}/orders/${acmeOrderId}`);
     await expect(page.getByText('Not found.')).toBeVisible();
-    await expect(page.locator('body')).not.toContainText(ACME_PRODUCT);
+    await expect(page.locator('body')).not.toContainText(product.acme);
     await shot(page, '11-dashboard-borg-cannot-see-acme');
   });
 });

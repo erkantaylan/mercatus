@@ -97,11 +97,40 @@ export const DEDICATED: Readonly<Record<string, DedicatedEndpoints>> = Object.fr
       {
         slug: m.tenant,
         store: m.endpoints['store'] ?? '',
-        storefront: m.endpoints['storefront'] ?? '',
+        storefront: ownHostname(m.tenant, m.endpoints['storefront'] ?? ''),
         dashboard: m.endpoints['dashboard'] ?? '',
       },
     ]),
 );
+
+/**
+ * A storefront is driven at a HOSTNAME of its own, never at `localhost:<port>`.
+ *
+ * Cookies are scoped by host and **ignore the port**, so three storefronts on `localhost` are one
+ * cookie jar: signing the shopper in at the second one overwrites the first one's session cookie,
+ * and since v2.0.0 phase 2 gave every box its own `AUTH_STUB_SECRET` (CE1, correctly), the token
+ * left behind is one the other store refuses -- `UNAUTHENTICATED` on a page that still says who
+ * is signed in, because the readable phone cookie is somebody else's too. Measured on the second
+ * dedicated tenant: orion's checkout button did nothing, with zenith's token in the jar.
+ *
+ * `<slug>.localtest.me` resolves to loopback with no `/etc/hosts` entry -- the same trick the edge
+ * already uses -- so this is the address a real deployment would have given the box anyway, and
+ * one browser context can hold four shops at once. The store API and the dashboard are left as
+ * published: the dashboard keeps its session in `localStorage`, which IS scoped by origin, port
+ * and all.
+ */
+function ownHostname(slug: string, published: string): string {
+  if (published === '') return '';
+  try {
+    const url = new URL(published);
+    if (url.hostname === 'localhost' || url.hostname === '127.0.0.1') {
+      url.hostname = `${slug}.localtest.me`;
+    }
+    return url.origin;
+  } catch {
+    return published;
+  }
+}
 
 /** The instance serving this tenant, or null when it is not running. */
 export function dedicated(slug: string): DedicatedEndpoints | null {
@@ -231,6 +260,24 @@ export async function licenceView(storeApi: string, slug: string): Promise<Licen
 export async function shopperCheckoutState(storeApi: string, slug: string): Promise<string> {
   const branding = await json<{ licence: { checkout: string } }>(`${storeApi}/t/${slug}/branding`);
   return branding.licence.checkout;
+}
+
+/**
+ * Something this shop can actually sell, chosen at RUN TIME rather than written down.
+ *
+ * A seeded title is a literal that runs out. `01` buys one `Rocket Skates` every run, and the run
+ * that takes the last one leaves every spec naming that title failing against a perfectly healthy
+ * stack -- with no error worth reading, because `Add to basket` is simply not on the card any
+ * more and the click loop just times out. A dedicated instance's catalogue is seeded by its own
+ * install command, so its titles were never in any seed this suite could name anyway.
+ */
+export async function sellableProduct(storeApi: string, slug: string): Promise<string> {
+  const { items } = await json<{ items: { title: string; stock: number }[] }>(
+    `${storeApi}/t/${slug}/products`,
+  );
+  const sellable = items.find((item) => item.stock > 0);
+  if (!sellable) throw new Error(`${slug} has nothing in stock at ${storeApi}`);
+  return sellable.title;
 }
 
 export async function staffOrderCount(storeApi: string, slug: string): Promise<number> {

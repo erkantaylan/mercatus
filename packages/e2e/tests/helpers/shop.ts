@@ -44,9 +44,21 @@ export function freshShopper(label: string): Shopper {
   return { phone: `+9055${digits}`, name: `E2E ${label}` };
 }
 
-/** The readable half of the session, as the browser holds it. The token beside it is httpOnly. */
-async function sessionPhone(page: Page): Promise<string | null> {
-  const found = (await page.context().cookies()).find((c) => c.name === 'mercatus_shopper_phone');
+/**
+ * The readable half of the session AT ONE STOREFRONT, as the browser holds it. The token beside
+ * it is httpOnly.
+ *
+ * The URL is not decoration. `context.cookies()` with no argument returns every cookie in the
+ * jar, whatever host set it -- and every storefront names the same person in
+ * `mercatus_shopper_phone`, so "is our shopper signed in here?" was answered `yes` by a cookie
+ * another store had set. The sign-in below then returned without this store ever minting a token,
+ * and the first thing that actually needed one failed with `UNAUTHENTICATED` on a page that still
+ * said who was buying. Scoped to the origin, the question is the one being asked.
+ */
+async function sessionPhone(page: Page, storefront: string): Promise<string | null> {
+  const found = (await page.context().cookies(storefront)).find(
+    (c) => c.name === 'mercatus_shopper_phone',
+  );
   return found ? decodeURIComponent(found.value) : null;
 }
 
@@ -59,12 +71,18 @@ async function sessionPhone(page: Page): Promise<string | null> {
  * being waited for is the SESSION COOKIE existing, not anything the DOM claims.
  */
 export async function signIn(page: Page, storefront: string, shopper: Shopper): Promise<void> {
+  // This host's jar first. The condition below is "the phone cookie says our shopper", and a
+  // cookie is scoped by HOST and not by origin -- so a sign-in at another storefront on the same
+  // hostname satisfies it without this one ever having minted a token, and the checkout that
+  // follows answers UNAUTHENTICATED with the page still naming the shopper. Clearing only this
+  // host leaves every other storefront's session alone, which is the point of the exercise.
+  await page.context().clearCookies({ domain: new URL(storefront).hostname });
   await expect(async () => {
     await page.goto(`${storefront}/signin`, { waitUntil: 'domcontentloaded' });
     await page.getByLabel('Phone').fill(shopper.phone);
     await page.getByLabel('Name').fill(shopper.name);
     await page.getByRole('button', { name: 'Sign in' }).click();
-    await expect.poll(() => sessionPhone(page), { timeout: 5000 }).toBe(shopper.phone);
+    await expect.poll(() => sessionPhone(page, storefront), { timeout: 5000 }).toBe(shopper.phone);
   }).toPass({ timeout: 60_000 });
 
   // Signing in navigates away, so come back: the page now says who is signed in, which is the
