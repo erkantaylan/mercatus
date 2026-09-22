@@ -52,19 +52,19 @@ var FakeBankUrl = $"http://bank.localtest.me:{edgePort}";
 // baked into the discovery document and every redirect) names this address.
 var IdentityUrl = $"http://127.0.0.1:{Port("MERCATUS_LOGTO_PORT", 28311)}";
 
-var controlPlane = builder.AddExternalService("control-plane", ControlPlaneUrl)
+var controlPlane = builder.AddExternalService("ext-control-plane", ControlPlaneUrl)
     .WithHttpHealthCheck("/health");
 
 // The payment stand-in (CR1). A dedicated plane calling it DIRECTLY is a known CE2 compromise
 // carried since task 07a: our bank credentials have no business on a customer's server, and the
 // correct path is the control plane's POST /payments/proxy. It is recorded in
 // decisions-made-overnight.md and it is visible here rather than hidden in an app's environment.
-var fakeBank = builder.AddExternalService("fake-bank", FakeBankUrl)
+var fakeBank = builder.AddExternalService("ext-fake-bank", FakeBankUrl)
     .WithHttpHealthCheck("/health");
 
 // One issuer, one JWKS, for both planes (CD4). Unused while this instance runs on the stub
 // adapter, and named anyway, because the dependency is real the moment AUTH_ADAPTER=oidc.
-var identity = builder.AddExternalService("identity", IdentityUrl);
+var identity = builder.AddExternalService("ext-identity", IdentityUrl);
 
 // ---------------------------------------------------------------------------------------------
 // Dev literals. Note which of A's secrets appear here and which do not.
@@ -118,8 +118,8 @@ var pgPassword = builder.AddParameter("pg-password", "mercatusdevpassword", secr
 // the pooled plane runs (CC2) -- N=1 is a configuration, not a second product. Default container
 // lifetime, never persistent (#818).
 // ---------------------------------------------------------------------------------------------
-var pgZenith = builder.AddPostgres("pg-zenith", pgUser, pgPassword);
-var dbZenith = pgZenith.AddDatabase("db-zenith", "store");
+var pgZenith = builder.AddPostgres("pg-tenant-zenith", pgUser, pgPassword);
+var dbZenith = pgZenith.AddDatabase("db-tenant-zenith", "store");
 
 ReferenceExpression Url(IResourceBuilder<PostgresServerResource> server, string credentials, string database) =>
     ReferenceExpression.Create(
@@ -129,7 +129,7 @@ ReferenceExpression SuperuserUrl(IResourceBuilder<PostgresServerResource> server
     ReferenceExpression.Create(
         $"postgres://postgres:{pgPassword.Resource}@{server.Resource.PrimaryEndpoint.Property(EndpointProperty.HostAndPort)}/{database}");
 
-var migrate = builder.AddExecutable("migrate-zenith", "pnpm", repoRoot,
+var migrate = builder.AddExecutable("task-migrate-tenant-zenith", "pnpm", repoRoot,
         "--filter", "@mercatus/db-store", "migrate")
     .WithEnvironment("DATABASE_SUPERUSER_URL", SuperuserUrl(pgZenith, "store"))
     .WithEnvironment("DATABASE_ADMIN_URL", Url(pgZenith, StoreOwner, "store"))
@@ -144,7 +144,7 @@ var migrate = builder.AddExecutable("migrate-zenith", "pnpm", repoRoot,
 // It needs the control plane to be reachable exactly once, ever. After that the credential file
 // is on the box and this step is a no-op, which is what makes it idempotent and resumable (CK2).
 // ---------------------------------------------------------------------------------------------
-var provision = builder.AddExecutable("provision-zenith", "pnpm", repoRoot,
+var provision = builder.AddExecutable("task-provision-tenant-zenith", "pnpm", repoRoot,
         "--filter", "@mercatus/store", "provision")
     .WithEnvironment("PLATFORM_URL", ControlPlaneUrl)
     .WithEnvironment("INSTANCE_BOOTSTRAP_TOKEN", BootstrapToken)
@@ -170,7 +170,7 @@ IResourceBuilder<ExecutableResource> Node(string name, string appDirectory, int?
         .WithEnvironment("NODE_ENV", "development")
         .WithOtlpExporter();
 
-var store = Node("store-zenith", "store", storePort,
+var store = Node("api-store-tenant-zenith", "store", storePort,
         // tsx first, so the second preload can BE TypeScript; telemetry second, so the SDK
         // patches http and pg before the application graph is built.
         "--import", "tsx",
@@ -217,7 +217,7 @@ var storeUrl = store.GetEndpoint("http");
 // wait on an endpoint it owns.
 store.WithEnvironment("STORE_PUBLIC_URL", storeUrl);
 
-var storefront = Node("storefront-zenith", "storefront", null,
+var storefront = Node("web-storefront-tenant-zenith", "storefront", null,
         "node_modules/next/dist/bin/next", "dev")
     .WithEnvironment("TENANT_SLUG", TenantSlug)
     .WithEnvironment("STORE_API_URL", storeUrl)
@@ -234,7 +234,7 @@ var storefront = Node("storefront-zenith", "storefront", null,
 // The merchant's own dashboard, on their own server (DK). It is the same build as the pooled
 // one with a different VITE_STORE_API_URL, and it is why "the control plane is down" does not
 // mean "the merchant cannot see their orders".
-var dashboard = Node("dashboard-zenith", "dashboard", null,
+var dashboard = Node("web-dashboard-tenant-zenith", "dashboard", null,
         "node_modules/vite/bin/vite.js", "--host", "127.0.0.1")
     .WithEnvironment("VITE_STORE_API_URL", storeUrl)
     .WithHttpHealthCheck("/")
@@ -245,7 +245,7 @@ storefront.WithEnvironment("STOREFRONT_PUBLIC_URL", storefrontUrl);
 
 // This box's half of the address book (see AppHostA for the other). The e2e suite merges the two
 // and skips B's spec when this file is absent, which is the same signal "B is not up" always was.
-builder.AddExecutable("stack-manifest", "node", repoRoot, "aspire/scripts/write-stack-manifest.mjs")
+builder.AddExecutable("task-stack-manifest", "node", repoRoot, "aspire/scripts/write-stack-manifest.mjs")
     .WithEnvironment("MERCATUS_MANIFEST_OUT", ".stack/apphost-b.json")
     .WithEnvironment("MERCATUS_EP_STORE_DEDICATED", storeUrl)
     .WithEnvironment("MERCATUS_EP_STOREFRONT_DEDICATED", storefrontUrl)

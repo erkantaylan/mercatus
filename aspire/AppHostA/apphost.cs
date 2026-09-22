@@ -110,8 +110,8 @@ var dbStore = pgStore.AddDatabase("db-store", "store");
 
 // Identity gets its OWN server too. It is a bought component (CD1, CD2) with a schema we do not
 // own and must never migrate, so it does not share a cluster with anything we do own.
-var pgLogto = builder.AddPostgres("pg-logto", pgUser, pgPassword);
-var dbLogto = pgLogto.AddDatabase("db-logto", "logto");
+var pgLogto = builder.AddPostgres("pg-identity", pgUser, pgPassword);
+var dbLogto = pgLogto.AddDatabase("db-identity", "logto");
 
 // postgres://<role>@<host:port>/<database>. The endpoint is resolved by Aspire at run time --
 // AddPostgres binds a random host port, so nothing here may hard-code one.
@@ -129,14 +129,14 @@ ReferenceExpression SuperuserUrl(IResourceBuilder<PostgresServerResource> server
 //   DATABASE_ADMIN_URL      owns the schema: drizzle-kit, the RLS policies, the seed
 // No server resource below is ever given either of them (BE2).
 // ---------------------------------------------------------------------------------------------
-var migratePlatform = builder.AddExecutable("migrate-platform", "pnpm", repoRoot,
+var migratePlatform = builder.AddExecutable("task-migrate-platform", "pnpm", repoRoot,
         "--filter", "@mercatus/db-platform", "migrate")
     .WithEnvironment("DATABASE_SUPERUSER_URL", SuperuserUrl(pgPlatform, "platform"))
     .WithEnvironment("DATABASE_ADMIN_URL", Url(pgPlatform, PlatformOwner, "platform"))
     .WithReference(dbPlatform)
     .WaitFor(dbPlatform);
 
-var migrateStore = builder.AddExecutable("migrate-store", "pnpm", repoRoot,
+var migrateStore = builder.AddExecutable("task-migrate-store", "pnpm", repoRoot,
         "--filter", "@mercatus/db-store", "migrate")
     .WithEnvironment("DATABASE_SUPERUSER_URL", SuperuserUrl(pgStore, "store"))
     .WithEnvironment("DATABASE_ADMIN_URL", Url(pgStore, StoreOwner, "store"))
@@ -151,7 +151,7 @@ var migrateStore = builder.AddExecutable("migrate-store", "pnpm", repoRoot,
 IResourceBuilder<ExecutableResource>? devSeed = null;
 if (builder.ExecutionContext.IsRunMode)
 {
-    devSeed = builder.AddExecutable("dev-seed", "pnpm", repoRoot, "run", "dev-seed")
+    devSeed = builder.AddExecutable("task-seed-tenants", "pnpm", repoRoot, "run", "dev-seed")
         // Two owners, one process: db-platform prefers PLATFORM_DATABASE_ADMIN_URL, exactly as
         // its test suite prefers PLATFORM_DATABASE_URL, for the same reason -- one variable
         // cannot name two databases.
@@ -171,7 +171,7 @@ if (builder.ExecutionContext.IsRunMode)
 // ADMIN_ENDPOINT must be the HOST-VISIBLE urls, because they end up in the discovery document
 // and in every redirect the browser follows.
 // ---------------------------------------------------------------------------------------------
-var logto = builder.AddContainer("logto", "svhd/logto", "1.43.0")
+var logto = builder.AddContainer("infra-identity", "svhd/logto", "1.43.0")
     .WithEntrypoint("sh")
     .WithArgs("-c", "npm run cli db seed -- --swe && npm start")
     .WithEnvironment("TRUST_PROXY_HEADER", "1")
@@ -200,7 +200,7 @@ var logto = builder.AddContainer("logto", "svhd/logto", "1.43.0")
 // at the repo root. Getting this wrong writes a cache nobody reads and fails silently.
 var identityCache = ".identity/store-pooled.json";
 var identityCacheFromPackage = $"../../{identityCache}";
-var logtoBootstrap = builder.AddExecutable("logto-bootstrap", "pnpm", repoRoot,
+var logtoBootstrap = builder.AddExecutable("task-identity-bootstrap", "pnpm", repoRoot,
         "--filter", "@mercatus/identity", "bootstrap")
     .WithEnvironment("LOGTO_ENDPOINT", logtoBase)
     .WithEnvironment("LOGTO_ADMIN_ENDPOINT", logtoAdminBase)
@@ -244,14 +244,14 @@ IResourceBuilder<ExecutableResource> Node(string name, string appDirectory) =>
         .WithOtlpExporter()
         .WithHttpHealthCheck("/health");
 
-var fakeBank = Node("fake-bank", "fake-bank")
+var fakeBank = Node("api-fake-bank", "fake-bank")
     // The run-mode gate (CR1). Only an AppHost sets it, and a published topology never does.
     .WithEnvironment("MERCATUS_ALLOW_FAKE_BANK", "1")
     .WithEnvironment("FAKE_BANK_HMAC_SECRET", FakeBankHmacSecret);
 
 var fakeBankUrl = fakeBank.GetEndpoint("http");
 
-var platform = Node("platform", "platform")
+var platform = Node("api-platform", "platform")
     .WithEnvironment("DATABASE_URL", Url(pgPlatform, PlatformApp, "platform"))
     .WithEnvironment("AUTH_ADAPTER", "stub")
     .WithEnvironment("AUTH_STUB_SECRET", AuthStubSecret)
@@ -269,7 +269,7 @@ var platform = Node("platform", "platform")
 var platformUrl = platform.GetEndpoint("http");
 platform.WithEnvironment("PLATFORM_URL", platformUrl);
 
-var storePooled = Node("store-pooled", "store")
+var storePooled = Node("api-store-pooled", "store")
     // One image, two modes, no second code path (CC1). This is the pooled half.
     .WithEnvironment("DEPLOYMENT_MODE", "pooled")
     .WithEnvironment("DATABASE_URL", Url(pgStore, StoreApp, "store"))
@@ -339,13 +339,13 @@ if (devSeed is not null)
 // WaitFor: the config has to be ON DISK before the container starts, or the file provider loads an
 // empty directory and every route 404s until somebody touches the file.
 // ---------------------------------------------------------------------------------------------
-var edgeConfig = builder.AddExecutable("edge-config", "node", ".", "traefik/write-dynamic.mjs")
+var edgeConfig = builder.AddExecutable("task-edge-config", "node", ".", "traefik/write-dynamic.mjs")
     .WithEnvironment("MERCATUS_EDGE_OUT", ".edge/dynamic.yml")
     .WithEnvironment("MERCATUS_EP_PLATFORM", platformUrl)
     .WithEnvironment("MERCATUS_EP_BANK", fakeBankUrl)
     .WithEnvironment("MERCATUS_EP_STORE_POOLED", storePooledUrl);
 
-builder.AddContainer("traefik", "traefik", "v3.5")
+builder.AddContainer("infra-edge", "traefik", "v3.5")
     .WithBindMount(".edge", "/etc/traefik/dynamic", isReadOnly: true)
     // The services run on the HOST, not in the container network. host-gateway is the docker
     // spelling of "the machine this container is running on".
@@ -386,7 +386,7 @@ IResourceBuilder<ExecutableResource> Web(string name, string appDirectory, param
         .WithEnvironment("NODE_ENV", "development")
         .WithOtlpExporter();
 
-var storefront = Web("storefront", "storefront", "node_modules/next/dist/bin/next", "dev")
+var storefront = Web("web-storefront-pooled", "storefront", "node_modules/next/dist/bin/next", "dev")
     // No TENANT_SLUG: this process is POOLED, so `/` lists the stores and `/t/:slug` is one of
     // them. That one absent variable is the whole of the mode difference in this app.
     .WithEnvironment("STOREFRONT_TENANT_SLUGS", "acme,borg")
@@ -404,13 +404,13 @@ var storefront = Web("storefront", "storefront", "node_modules/next/dist/bin/nex
 // 0.0.0.0, not 127.0.0.1: Traefik reaches these from inside a container over the docker host
 // gateway, and the demo is supposed to be reachable through ONE port (dash.localtest.me:8080,
 // console.localtest.me:8080). strictPort in each vite.config.ts is what keeps the number fixed.
-var dashboard = Web("dashboard", "dashboard",
+var dashboard = Web("web-dashboard-pooled", "dashboard",
         "node_modules/vite/bin/vite.js", "--host", "0.0.0.0")
     .WithEnvironment("VITE_STORE_API_URL", storePooledUrl)
     .WithHttpHealthCheck("/")
     .WaitFor(storePooled);
 
-var admin = Web("admin", "admin",
+var admin = Web("web-console", "admin",
         "node_modules/vite/bin/vite.js", "--host", "0.0.0.0")
     .WithEnvironment("VITE_PLATFORM_URL", platformUrl)
     .WithHttpHealthCheck("/")
@@ -442,7 +442,7 @@ logtoBootstrap
 // writes one: the e2e suite loads it instead of carrying its own copy of 8.1, and a human who
 // wants the storefront can cat it. Repo root, because AppHost B writes its half beside it.
 // ---------------------------------------------------------------------------------------------
-builder.AddExecutable("stack-manifest", "node", repoRoot, "aspire/scripts/write-stack-manifest.mjs")
+builder.AddExecutable("task-stack-manifest", "node", repoRoot, "aspire/scripts/write-stack-manifest.mjs")
     .WithEnvironment("MERCATUS_MANIFEST_OUT", ".stack/apphost-a.json")
     .WithEnvironment("MERCATUS_EP_PLATFORM", platformUrl)
     .WithEnvironment("MERCATUS_EP_STORE_POOLED", storePooledUrl)

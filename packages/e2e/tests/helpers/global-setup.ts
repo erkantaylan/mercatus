@@ -15,7 +15,7 @@ interface Requirement {
 
 const REQUIRED: readonly Requirement[] = [
   { name: 'platform (control plane)', url: ENDPOINTS.platform, path: '/health' },
-  { name: 'store-pooled', url: ENDPOINTS.storePooled, path: '/health' },
+  { name: 'api-store-pooled', url: ENDPOINTS.storePooled, path: '/health' },
   { name: 'fake-bank', url: ENDPOINTS.bank, path: '/health' },
   { name: 'traefik (the edge)', url: ENDPOINTS.edge, path: '/health' },
   { name: 'storefront (pooled)', url: ENDPOINTS.storefront, path: '/t/acme' },
@@ -25,8 +25,8 @@ const REQUIRED: readonly Requirement[] = [
 
 const OPTIONAL: readonly Requirement[] = [
   { name: 'store-zenith (dedicated)', url: ENDPOINTS.storeDedicated, path: '/health' },
-  { name: 'storefront-zenith', url: ENDPOINTS.storefrontDedicated, path: '/t/zenith' },
-  { name: 'dashboard-zenith', url: ENDPOINTS.dashboardDedicated, path: '/' },
+  { name: 'web-storefront-tenant-zenith', url: ENDPOINTS.storefrontDedicated, path: '/t/zenith' },
+  { name: 'web-dashboard-tenant-zenith', url: ENDPOINTS.dashboardDedicated, path: '/' },
 ];
 
 const WAIT_MS = 90_000;

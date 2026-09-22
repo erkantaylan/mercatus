@@ -335,6 +335,28 @@ to run against a stack that is down and names the `aspire run` that is missing.
 
 ---
 
+## Resource names
+
+Every resource in both AppHosts is prefixed by what it *is*, so the dashboard groups by kind
+rather than by the order someone declared things. Tenant-owned resources carry the word `tenant`.
+
+| Prefix | | AppHost A | AppHost B |
+|---|---|---|---|
+| `api-` | HTTP APIs we wrote | `api-platform`, `api-store-pooled`, `api-fake-bank` | `api-store-tenant-zenith` |
+| `web-` | browser-facing front ends | `web-storefront-pooled`, `web-dashboard-pooled`, `web-console` | `web-storefront-tenant-zenith`, `web-dashboard-tenant-zenith` |
+| `pg-` | Postgres servers | `pg-platform`, `pg-store`, `pg-identity` | `pg-tenant-zenith` |
+| `db-` | databases on them | `db-platform`, `db-store`, `db-identity` | `db-tenant-zenith` |
+| `infra-` | third-party containers | `infra-identity` (Logto), `infra-edge` (Traefik) | — |
+| `task-` | one-shot, runs and exits | `task-migrate-platform`, `task-migrate-store`, `task-seed-tenants`, `task-identity-bootstrap`, `task-edge-config`, `task-stack-manifest` | `task-migrate-tenant-zenith`, `task-provision-tenant-zenith`, `task-stack-manifest` |
+| `ext-` | services owned by the *other* AppHost | — | `ext-control-plane`, `ext-identity`, `ext-fake-bank` |
+
+`web-console` is the platform console and `web-dashboard-*` is a merchant's dashboard — two
+different audiences, never one app with a flag (`BH1`), so they do not share a name either.
+
+The `ext-` prefix only exists in B, and that is the point: those three are the *only* things B
+knows about A. Anything else would be a database reference, which is the boundary `CO3` exists to
+keep (see [`docs/architecture.md`](./docs/architecture.md) §10).
+
 ## Docs
 
 | | |
