@@ -52,6 +52,23 @@ async function waitForAll(): Promise<string[]> {
 }
 
 export default async function globalSetup(): Promise<void> {
+  // No address book at all means no AppHost has come up and written one. Probing ten empty URLs
+  // for ninety seconds to reach the same conclusion wastes a minute and reports it as ten
+  // unrelated failures.
+  const unknown = REQUIRED.filter((requirement) => requirement.url === '').map((r) => r.name);
+  if (unknown.length > 0) {
+    throw new Error(
+      [
+        'No running stack found: .stack/apphost-a.json was not written, so nothing is up.',
+        '',
+        '  cd aspire/AppHostA && aspire run --detach --non-interactive --nologo --format Json',
+        '  cd aspire/AppHostB && aspire run --detach --non-interactive --nologo --format Json',
+        '',
+        `Without an address for: ${unknown.join(', ')}.`,
+      ].join('\n'),
+    );
+  }
+
   const missing = await waitForAll();
   if (missing.length > 0) {
     throw new Error(
@@ -67,7 +84,8 @@ export default async function globalSetup(): Promise<void> {
     );
   }
 
-  const optional = await Promise.all(OPTIONAL.map((r) => probe(r.url, r.path)));
+  // An address B never published is B being down, not a probe worth making.
+  const optional = await Promise.all(OPTIONAL.map((r) => (r.url === '' ? { ok: false, status: null } : probe(r.url, r.path))));
   const down = OPTIONAL.filter((_, index) => !optional[index]?.ok).map((r) => r.name);
   process.stdout.write(
     down.length === 0

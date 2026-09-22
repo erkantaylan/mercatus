@@ -29,15 +29,19 @@ pnpm install                       # ~3s warm
 A is ready in ~15 s, B in ~15 s more. `--detach` is not optional: without it the command never
 returns. Readiness, in one loop:
 
+A's surfaces all come through the edge, so they are the one set of addresses still worth typing.
+B's two are Aspire-assigned, so they are read out of the address book the run wrote:
+
 ```bash
-for u in http://platform.localtest.me:8080/health \
-         http://api.localtest.me:8080/health \
-         http://bank.localtest.me:8080/health \
-         http://shop.localtest.me:8080/t/acme \
-         http://dash.localtest.me:8080/ \
-         http://console.localtest.me:8080/ \
-         http://127.0.0.1:4003/health \
-         http://127.0.0.1:3002/t/zenith; do
+E=${MERCATUS_EDGE_PORT:-28080}
+for u in http://platform.localtest.me:$E/health \
+         http://api.localtest.me:$E/health \
+         http://bank.localtest.me:$E/health \
+         http://shop.localtest.me:$E/t/acme \
+         http://dash.localtest.me:$E/ \
+         http://console.localtest.me:$E/ \
+         "$(jq -r .endpoints.store_dedicated .stack/apphost-b.json)/health" \
+         "$(jq -r .endpoints.storefront_dedicated .stack/apphost-b.json)/t/zenith"; do
   printf '%s -> %s\n' "$u" "$(curl -s -o /dev/null -m 4 -w '%{http_code}' "$u")"
 done
 ```

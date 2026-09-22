@@ -5,29 +5,68 @@
  * stack the way an operator does, so a shared helper that happened to bypass the wire would be
  * testing the helper.
  *
- * Ports are BUILD-PLAN §8.1 and the README's table, restated once (a constant that drifts is worse
- * than a literal that does not).
+ * Addresses are READ, not declared. Every service port is Aspire-assigned now, so the table that
+ * used to live here -- BUILD-PLAN §8.1 restated once -- would name ports nothing is listening on.
+ * Each AppHost writes its half of the address book to `.stack/` as it comes up
+ * (aspire/scripts/write-stack-manifest.mjs) and this merges the two. B's half is optional, exactly
+ * as B itself always was: its absence is what makes the dedicated-instance spec skip.
  */
 import { execFileSync, spawn } from 'node:child_process';
-import { mkdirSync, readFileSync, readlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readlinkSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+
+const STACK_DIR = fileURLToPath(new URL('../../../../.stack/', import.meta.url));
+
+interface Manifest {
+  readonly writtenAt: string;
+  readonly endpoints: Readonly<Record<string, string>>;
+}
+
+/**
+ * One AppHost's half of the address book, or `{}` when it has not written one.
+ *
+ * A missing file is a stack that is down, which global-setup reports in a sentence. A malformed
+ * one is a bug worth seeing, so it is not swallowed.
+ */
+function readManifest(name: string): Readonly<Record<string, string>> {
+  const path = `${STACK_DIR}${name}.json`;
+  if (!existsSync(path)) return {};
+  const parsed = JSON.parse(readFileSync(path, 'utf8')) as Manifest;
+  return parsed.endpoints;
+}
+
+const manifest = { ...readManifest('apphost-a'), ...readManifest('apphost-b') };
+
+/**
+ * `MERCATUS_EP_STORE_POOLED` was written as `store_pooled`; the suite has always called it
+ * `storePooled`. One camel-casing here beats renaming the key at both ends.
+ */
+function endpoint(key: string): string {
+  return manifest[key.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`)] ?? '';
+}
 
 export const ENDPOINTS = {
   /** AppHost A -- the control plane and the pooled data plane. */
-  platform: 'http://127.0.0.1:4001',
-  storePooled: 'http://127.0.0.1:4002',
-  bank: 'http://127.0.0.1:4004',
-  storefront: 'http://127.0.0.1:3001',
-  dashboard: 'http://127.0.0.1:5173',
-  admin: 'http://127.0.0.1:5174',
-  edge: 'http://127.0.0.1:8080',
+  platform: endpoint('platform'),
+  storePooled: endpoint('storePooled'),
+  bank: endpoint('bank'),
+  storefront: endpoint('storefront'),
+  dashboard: endpoint('dashboard'),
+  admin: endpoint('admin'),
+  edge: endpoint('edge'),
   /** AppHost B -- "Zenith's VPS". Optional: the suite skips its spec when B is not up. */
-  storeDedicated: 'http://127.0.0.1:4003',
-  storefrontDedicated: 'http://127.0.0.1:3002',
-  dashboardDedicated: 'http://127.0.0.1:5175',
+  storeDedicated: endpoint('storeDedicated'),
+  storefrontDedicated: endpoint('storefrontDedicated'),
+  dashboardDedicated: endpoint('dashboardDedicated'),
 } as const;
 
-export const PLATFORM_PORT = 4001;
+/**
+ * The port the control plane was allocated this run.
+ *
+ * `03-dedicated-outage.spec.ts` kills the platform PROCESS rather than the AppHost, and finds it
+ * by the port it is listening on -- so this has to be the live number, not a constant.
+ */
+export const PLATFORM_PORT = Number(new URL(ENDPOINTS.platform || 'http://127.0.0.1:0').port);
 
 /**
  * Where a hand-relaunched control plane records its pid, and the wrapper that makes it mortal.

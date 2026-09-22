@@ -106,7 +106,7 @@ differ architecturally:
 
 | Tier | Address | Data | In the POC |
 |---|---|---|---|
-| 1 — pooled, path | `shop.localtest.me:8080/t/acme` | shared DB, RLS | ✅ |
+| 1 — pooled, path | `shop.localtest.me:28080/t/acme` | shared DB, RLS | ✅ |
 | 2 — pooled, custom domain | `acme.com` → our edge | shared DB, RLS | designed, not built |
 | 3 — dedicated | `acme.localtest.me`, their server | own DB, one tenant | ✅ |
 
@@ -215,7 +215,7 @@ B needs A running when it starts: it presents a one-time bootstrap token to
 `POST /installations/register`, is given a per-instance credential (`CE1`) which it writes to
 `.instance/zenith.json`, and polls with that from then on. B's application model contains no
 control-plane database — it reaches A only through `AddExternalService`, over
-`platform.localtest.me:8080` and `bank.localtest.me:8080`. `*.localtest.me` resolves to
+`platform.localtest.me:28080` and `bank.localtest.me:28080`. `*.localtest.me` resolves to
 `127.0.0.1` without touching `/etc/hosts`.
 
 **`aspire stop` on A destroys A's database with it**, so a rebuilt control plane has never heard
@@ -228,10 +228,10 @@ check runs **only at B's start** — a B that is already running when A is rebui
 see **The demo** below. An unreachable control plane is *not* a refusal: B keeps
 its credential and boots anyway (`CG1`).
 
-**Every page of A's is served on one port**, 8080, through the edge — one hostname per surface,
+**Every page of A's is served on one port**, 28080, through the edge — one hostname per surface,
 all of them `*.localtest.me`, which resolves to loopback with no `/etc/hosts` entry:
 
-| Through the edge, port 8080 | |
+| Through the edge, port 28080 | |
 |---|---|
 | `shop.localtest.me/t/acme`, `/t/borg` | tier 1 storefronts, pooled |
 | `dash.localtest.me` | merchant dashboard, pooled |
@@ -241,30 +241,39 @@ all of them `*.localtest.me`, which resolves to loopback with no `/etc/hosts` en
 | `api.localtest.me`, and anything unmatched | the pooled store API |
 
 **Be honest about how far that goes: it is true of the HTML, and not of everything the page then
-does.** Two known leaks off the edge, both fine on a laptop and both wrong the moment only 8080 is
-exposed:
+does.** Two known leaks off the edge, both fine on a laptop and both wrong the moment only the edge
+port is exposed:
 
 - **Checkout leaves the edge.** fake-bank builds its hosted payment URL from the request it
-  received, and the storefront calls it at `FAKE_BANK_URL=http://127.0.0.1:4004` — so a shopper
-  who bought at `shop.localtest.me:8080` is sent to `127.0.0.1:4004` to pay. The
+  received, and the storefront calls it at its direct `FAKE_BANK_URL` — so a shopper who bought at
+  `shop.localtest.me:28080` is sent straight to fake-bank's own port to pay. The
   `bank.localtest.me` route exists; this flow does not use it.
-- **The two SPAs are served through the edge and call the APIs direct**, at
-  `VITE_STORE_API_URL=http://127.0.0.1:4002` and `VITE_PLATFORM_URL=http://127.0.0.1:4001` (both
-  set in `aspire/AppHostA/apphost.cs`). Nothing complains, because CORS is `origin: true` on
-  every service — see `packages/core/src/http/server.ts`.
+- **The two SPAs are served through the edge and call the APIs direct**, at `VITE_STORE_API_URL`
+  and `VITE_PLATFORM_URL` (both set in `aspire/AppHostA/apphost.cs`). Nothing complains, because
+  CORS is `origin: true` on every service — see `packages/core/src/http/server.ts`.
 
 Pointing those three variables at the edge hostnames, and then narrowing CORS to them, is one
 change and is the first item in [`docs/MORNING.md`](./docs/MORNING.md) §6.
 
-The direct ports are still there, and are what the e2e suite drives:
+**The direct ports are still there, and are what the e2e suite drives — but they are no longer
+numbers anyone can write down.** Every one of them is assigned by Aspire at run time, so the table
+that used to sit here would be wrong on the first run. Each AppHost writes its own half of the
+address book as it comes up:
 
-| | |
-|---|---|
-| `127.0.0.1:3001/t/acme`, `/t/borg` | tier 1 storefronts, pooled |
-| `127.0.0.1:3002` | tier 3 storefront — Zenith, on "their server" |
-| `127.0.0.1:5173` · `5175` | merchant dashboard, pooled · dedicated |
-| `127.0.0.1:5174` | platform console |
-| `127.0.0.1:4001` · `4002` · `4003` · `4004` | platform · store-pooled · store-zenith · fake-bank |
+```bash
+cat .stack/apphost-a.json    # platform, store-pooled, bank, storefront, dashboard, admin, edge
+cat .stack/apphost-b.json    # store-zenith, storefront-zenith, dashboard-zenith
+```
+
+`packages/e2e/tests/helpers/stack.ts` merges the two and drives whatever it finds; B's half being
+absent is exactly what makes the dedicated-instance spec skip. Both Aspire dashboards
+(**15230** and **15240**) list the same addresses if you would rather click.
+
+Four ports are still fixed, because AppHost B has to find A without reading A's application model:
+the edge (`28080`), identity and its admin API (`28311`, `28312`), and the dedicated store
+(`28403`). Each reads an override — `MERCATUS_EDGE_PORT`, `MERCATUS_LOGTO_PORT`,
+`MERCATUS_LOGTO_ADMIN_PORT`, `MERCATUS_STORE_DEDICATED_PORT` — and both AppHosts read the same
+variable, so a collision is one export in front of both commands.
 
 One `aspire run` in `aspire/AppHostA` starts all of A — the control plane, the pooled store, the
 storefront, the dashboard, the console, identity and the edge. AppHost **B** starts its own
@@ -280,7 +289,8 @@ end-to-end suite drives the **stub**, so headline #3 is demonstrated by
 driven with curl) and not by `pnpm test:e2e`. Logto is started, health-checked and bootstrapped on
 every run regardless, which costs a container and a bootstrap step.
 
-**The demo.** With both up, buy something on `127.0.0.1:3002`. Then
+**The demo.** With both up, buy something on the dedicated storefront —
+`jq -r .endpoints.storefront_dedicated .stack/apphost-b.json` is where it landed this run. Then
 `cd aspire/AppHostA && aspire stop` — the whole control plane, not a resource — and buy again.
 The dedicated store keeps serving and keeps taking orders; only the payment waits, because
 payments are ours and never run on a customer's server (`CE2`). After
@@ -305,7 +315,8 @@ Giving the poll agent the same re-register branch would make "bring A back" the 
 it is the first item in [`docs/MORNING.md`](./docs/MORNING.md) §6.
 
 If what you want is the *catches-up* story rather than the destroyed-database one, kill the
-platform **process** instead of the AppHost (`ss -ltnp | grep :4001`, then `kill -TERM`). DCP does
+platform **process** instead of the AppHost (`ss -ltnp | grep ":$(jq -r '.endpoints.platform'
+.stack/apphost-a.json | cut -d: -f3)"`, then `kill -TERM`). DCP does
 not restart it, A's database survives, and B recovers on its own within one poll. That is what
 `packages/e2e/tests/03-dedicated-outage.spec.ts` does.
 

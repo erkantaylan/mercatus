@@ -12,7 +12,7 @@ verified against on 2026-09-22.
 | **Node.js** | ≥ 22.0.0 | 22.23.2 | `engines` in `package.json` |
 | **pnpm** | 12.5.1 | 12.5.1 | pinned in `packageManager`; ships via corepack |
 | **.NET SDK** | 10.0.x | 10.0.110 | the two Aspire AppHosts are single-file C# |
-| **Aspire CLI** | ≥ 13.5.3 | 13.5.3 | AppHost SDK pinned to `Aspire.AppHost.Sdk@13.5.4` |
+| **Aspire CLI** | ≥ 13.5.2 | 13.5.3 | AppHost SDK pinned to `Aspire.AppHost.Sdk@13.5.4` |
 | **Docker** | ≥ 24 | 29.7.2 | must be usable **without sudo** |
 | **Google Chrome** | any current | 151.0.7922.108 | Playwright runs `channel: 'chrome'`; no browser is downloaded |
 
@@ -45,20 +45,26 @@ Four Postgres containers run at once with both AppHosts up: `pg-platform`, `pg-s
 
 ### Ports that must be free
 
-| Port | |
-|---|---|
-| `8080` | Traefik edge — every HTML surface of AppHost A |
-| `4001` | platform API |
-| `4002` | store API (pooled) |
-| `4003` | store API (dedicated, AppHost B) |
-| `4004` | fake-bank |
-| `3001` | storefront (pooled) |
-| `3002` | storefront (dedicated) |
-| `5173` | merchant dashboard |
-| `5174` | platform console |
-| dynamic | Postgres instances and both Aspire dashboards, assigned at run time |
+**Almost none.** Every service port is assigned by Aspire at run time, so a machine already
+running something on 8080 or 3001 needs no arrangement — which is how this ended up here, on a box
+whose 8080 was a reverse proxy and whose 3001 was a markdown server.
 
-`3000` is deliberately unused.
+Four ports are fixed, because a second application model has to find them without reading the
+first (see `aspire/AppHostA/apphost.cs`). Each takes an override, so a collision is a variable and
+not a patch — export it for **both** `aspire run` commands, since both AppHosts read it:
+
+| Port | Override | |
+|---|---|---|
+| `28080` | `MERCATUS_EDGE_PORT` | Traefik edge — every HTML surface of AppHost A |
+| `28311` | `MERCATUS_LOGTO_PORT` | identity, as the OIDC discovery document advertises it |
+| `28312` | `MERCATUS_LOGTO_ADMIN_PORT` | identity admin, where the M2M token is minted |
+| `28403` | `MERCATUS_STORE_DEDICATED_PORT` | store API on "their VPS" — registered as a redirect URI by AppHost A |
+| dynamic | | everything else: both store APIs' siblings, both storefronts, both dashboards, the console, the platform API, fake-bank, four Postgres instances, both Aspire dashboards |
+
+Where the dynamic ones landed is written to `.stack/apphost-a.json` and `.stack/apphost-b.json` on
+every run, which is what the e2e suite reads instead of a table.
+
+The two Aspire dashboards stay on `15230` (A) and `15240` (B), set in each `apphost.run.json`.
 
 ---
 

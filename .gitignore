@@ -23,3 +23,9 @@ coverage/
 # Playwright output -- screenshots, traces and the HTML report from `pnpm test:e2e`.
 test-results/
 playwright-report/
+
+# Written on every `aspire run`: the edge routing table and the address book, both full of
+# ports Aspire assigned this run (aspire/AppHostA/traefik/write-dynamic.mjs,
+# aspire/scripts/write-stack-manifest.mjs).
+aspire/AppHostA/.edge/
+.stack/

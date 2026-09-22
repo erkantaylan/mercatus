@@ -33,17 +33,24 @@ var builder = DistributedApplication.CreateBuilder(args);
 // They are AppHost A's STABLE addresses -- its Traefik on a fixed port, with *.localtest.me
 // resolving to loopback without touching /etc/hosts. Stable is the requirement: a random
 // Aspire-assigned port would make this a lookup into another application model, which is exactly
-// the coupling the two-AppHost split exists to prevent.
+// the coupling the two-AppHost split exists to prevent. Everything else in this file IS
+// Aspire-assigned; these are the addresses that cannot be, and they read the same environment
+// variables A does, so overriding a collision is one variable exported to both commands and never
+// an edit in two places.
 //
 // No WaitFor on any of them. A dedicated instance must boot with the control plane unreachable --
 // that is the demo, and a store that refuses to start because our licence server had a bad
 // afternoon is the failure CG1 exists to stop.
 // ---------------------------------------------------------------------------------------------
-const string ControlPlaneUrl = "http://platform.localtest.me:8080";
-const string FakeBankUrl = "http://bank.localtest.me:8080";
+int Port(string variable, int fallback) =>
+    int.TryParse(Environment.GetEnvironmentVariable(variable), out var parsed) ? parsed : fallback;
+
+var edgePort = Port("MERCATUS_EDGE_PORT", 28080);
+var ControlPlaneUrl = $"http://platform.localtest.me:{edgePort}";
+var FakeBankUrl = $"http://bank.localtest.me:{edgePort}";
 // Logto keeps its own fixed host port; A's edge has no router for it, and its ENDPOINT (which is
 // baked into the discovery document and every redirect) names this address.
-const string IdentityUrl = "http://127.0.0.1:3011";
+var IdentityUrl = $"http://127.0.0.1:{Port("MERCATUS_LOGTO_PORT", 28311)}";
 
 var controlPlane = builder.AddExternalService("control-plane", ControlPlaneUrl)
     .WithHttpHealthCheck("/health");
@@ -87,13 +94,14 @@ const string BootstrapToken = "mercatus-dev-bootstrap-token-for-zenith-001";
 const string TenantSlug = "zenith";
 const string TenantName = "Zenith Tools";
 
-const int StorePort = 4003;
-const int StorefrontPort = 3002;
-const int DashboardPort = 5175;
+// The store API is the fourth and last literal in the whole topology, and it is one because
+// AppHost A registers it as an OIDC redirect target (STORE_DEDICATED_URL) before this AppHost has
+// ever run. A's apphost.cs reads the same variable and the same default. The storefront and the
+// dashboard beside it need no such agreement -- they are in THIS model, so they are
+// Aspire-assigned like everything else, and they find the store through its EndpointReference.
+var storePort = Port("MERCATUS_STORE_DEDICATED_PORT", 28403);
 
 var repoRoot = "../..";
-var storeBase = $"http://127.0.0.1:{StorePort}";
-var storefrontBase = $"http://127.0.0.1:{StorefrontPort}";
 
 // The credential the install command writes and the store reads (CE1). Both resources run with
 // their working directory inside apps/store -- `pnpm --filter` runs a script with cwd = the
@@ -153,13 +161,16 @@ var provision = builder.AddExecutable("provision-zenith", "pnpm", repoRoot,
 // The apps. The SAME code as the pooled plane, with DEPLOYMENT_MODE=dedicated and one tenant
 // (CC1): no fork, no self-hosted edition, no second code path.
 // ---------------------------------------------------------------------------------------------
-IResourceBuilder<ExecutableResource> Node(string name, string appDirectory, int port, params string[] args) =>
+// `port: null` means Aspire allocates. The store passes its own, because A had to be told it in
+// advance; nothing else here does. isProxied:false throughout -- the process binds the port
+// itself, which is what makes the allocated number the number that is actually listening.
+IResourceBuilder<ExecutableResource> Node(string name, string appDirectory, int? port, params string[] args) =>
     builder.AddExecutable(name, "node", $"{repoRoot}/apps/{appDirectory}", args)
         .WithHttpEndpoint(port: port, targetPort: port, name: "http", env: "PORT", isProxied: false)
         .WithEnvironment("NODE_ENV", "development")
         .WithOtlpExporter();
 
-var store = Node("store-zenith", "store", StorePort,
+var store = Node("store-zenith", "store", storePort,
         // tsx first, so the second preload can BE TypeScript; telemetry second, so the SDK
         // patches http and pg before the application graph is built.
         "--import", "tsx",
@@ -174,7 +185,6 @@ var store = Node("store-zenith", "store", StorePort,
     .WithEnvironment("OIDC_ISSUER", $"{IdentityUrl}/oidc")
     .WithEnvironment("OIDC_JWKS_CACHE_PATH", "../../.identity/store-zenith.json")
     .WithEnvironment("SESSION_SECRET", SessionSecret)
-    .WithEnvironment("STORE_PUBLIC_URL", storeBase)
     .WithEnvironment("BASE_HOST", "localtest.me")
     // CE4: this box PULLS. One URL out, no route in.
     .WithEnvironment("PLATFORM_URL", ControlPlaneUrl)
@@ -201,11 +211,16 @@ var store = Node("store-zenith", "store", StorePort,
 // Ships with the instance (DK): the same Next.js app as the pooled storefront, with TENANT_SLUG
 // set. That one variable is the whole of "dedicated mode" here -- the root path becomes this one
 // store instead of an index of stores.
-Node("storefront-zenith", "storefront", StorefrontPort,
+var storeUrl = store.GetEndpoint("http");
+
+// Self-reference, no WaitFor: the store builds absolute URLs out of its own address and cannot
+// wait on an endpoint it owns.
+store.WithEnvironment("STORE_PUBLIC_URL", storeUrl);
+
+var storefront = Node("storefront-zenith", "storefront", null,
         "node_modules/next/dist/bin/next", "dev")
     .WithEnvironment("TENANT_SLUG", TenantSlug)
-    .WithEnvironment("STORE_API_URL", storeBase)
-    .WithEnvironment("STOREFRONT_PUBLIC_URL", storefrontBase)
+    .WithEnvironment("STORE_API_URL", storeUrl)
     // The CE2 compromise, in the open: their box signs payment requests with our bank's key.
     .WithEnvironment("FAKE_BANK_URL", FakeBankUrl)
     .WithEnvironment("FAKE_BANK_HMAC_SECRET", FakeBankHmacSecret)
@@ -219,10 +234,21 @@ Node("storefront-zenith", "storefront", StorefrontPort,
 // The merchant's own dashboard, on their own server (DK). It is the same build as the pooled
 // one with a different VITE_STORE_API_URL, and it is why "the control plane is down" does not
 // mean "the merchant cannot see their orders".
-Node("dashboard-zenith", "dashboard", DashboardPort,
+var dashboard = Node("dashboard-zenith", "dashboard", null,
         "node_modules/vite/bin/vite.js", "--host", "127.0.0.1")
-    .WithEnvironment("VITE_STORE_API_URL", storeBase)
+    .WithEnvironment("VITE_STORE_API_URL", storeUrl)
     .WithHttpHealthCheck("/")
     .WaitFor(store);
+
+var storefrontUrl = storefront.GetEndpoint("http");
+storefront.WithEnvironment("STOREFRONT_PUBLIC_URL", storefrontUrl);
+
+// This box's half of the address book (see AppHostA for the other). The e2e suite merges the two
+// and skips B's spec when this file is absent, which is the same signal "B is not up" always was.
+builder.AddExecutable("stack-manifest", "node", repoRoot, "aspire/scripts/write-stack-manifest.mjs")
+    .WithEnvironment("MERCATUS_MANIFEST_OUT", ".stack/apphost-b.json")
+    .WithEnvironment("MERCATUS_EP_STORE_DEDICATED", storeUrl)
+    .WithEnvironment("MERCATUS_EP_STOREFRONT_DEDICATED", storefrontUrl)
+    .WithEnvironment("MERCATUS_EP_DASHBOARD_DEDICATED", dashboard.GetEndpoint("http"));
 
 builder.Build().Run();

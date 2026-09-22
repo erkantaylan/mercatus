@@ -44,36 +44,54 @@ const string SessionSecret = "mercatus-dev-session-secret-0123456789";
 // pooled plane is a process we run, on our machine, beside the control plane.
 const string PlatformInternalToken = "mercatus-dev-internal-token-0123456789";
 
-const int PlatformPort = 4001;
-const int StorePooledPort = 4002;
-const int FakeBankPort = 4004;
-const int StorefrontPort = 3001;
-const int DashboardPort = 5173;
-const int AdminPort = 5174;
-const int TraefikPort = 8080;
-// Logto's own defaults are 3001 and 3002, which are the two storefronts here (BUILD-PLAN 8.1).
-// The container keeps its internal ports; only the host side moves.
-const int LogtoPort = 3011;
-const int LogtoAdminPort = 3012;
+// ---------------------------------------------------------------------------------------------
+// Ports. NOTHING below is a service port any more: every process in this file listens on whatever
+// Aspire assigns it, and the addresses travel between resources as EndpointReferences rather than
+// as agreed numbers. BUILD-PLAN 8.1's table (4001, 4002, 3001, 5173 ...) was a standing collision
+// with whatever else the machine happened to be running -- on the box this was converted, 8080
+// was a reverse proxy and 3001 a markdown server, and neither of them cares what 8.1 claimed.
+//
+// FOUR addresses survive as literals, and they are exactly the ones a SECOND application model has
+// to find without reading this one. AppHost B reaches the control plane and the bank through the
+// edge; the identity issuer is baked into the discovery document and every redirect it hands a
+// browser; and the dedicated store's own address is registered HERE, as a redirect URI, before
+// that store exists. A random port would turn each of those into a lookup across AppHosts, which
+// is the coupling the two-AppHost split exists to prevent (CO3).
+//
+// They are deliberately unremarkable numbers rather than famous ones, and each takes an override,
+// so a collision is a variable and not a patch:
+//
+//   MERCATUS_EDGE_PORT             the edge; B's control-plane and bank URLs hang off it
+//   MERCATUS_LOGTO_PORT            the OIDC issuer, as the discovery document advertises it
+//   MERCATUS_LOGTO_ADMIN_PORT      where the M2M token is minted
+//   MERCATUS_STORE_DEDICATED_PORT  B's store API -- see AppHostB, which reads the same variable
+// ---------------------------------------------------------------------------------------------
+int Port(string variable, int fallback) =>
+    int.TryParse(Environment.GetEnvironmentVariable(variable), out var parsed) ? parsed : fallback;
+
+var traefikPort = Port("MERCATUS_EDGE_PORT", 28080);
+// Pre-built, not interpolated at the call site. An interpolated literal handed to
+// WithEnvironment binds to the ReferenceExpression overload, and an int is not an IValueProvider.
+var edgeBase = $"http://127.0.0.1:{traefikPort}";
+// Logto's own defaults are 3001 and 3002, which used to be the two storefronts here. The
+// container keeps its internal ports; only the host side moves.
+var logtoPort = Port("MERCATUS_LOGTO_PORT", 28311);
+var logtoAdminPort = Port("MERCATUS_LOGTO_ADMIN_PORT", 28312);
+var storeDedicatedPort = Port("MERCATUS_STORE_DEDICATED_PORT", 28403);
 
 var repoRoot = "../..";
 
-// Pre-built strings. An interpolated literal handed to WithEnvironment binds to the
-// ReferenceExpression overload, and an int is not an IValueProvider.
-var platformBase = $"http://127.0.0.1:{PlatformPort}";
-var storePooledBase = $"http://127.0.0.1:{StorePooledPort}";
-var logtoBase = $"http://127.0.0.1:{LogtoPort}";
-var logtoAdminBase = $"http://127.0.0.1:{LogtoAdminPort}";
+var logtoBase = $"http://127.0.0.1:{logtoPort}";
+var logtoAdminBase = $"http://127.0.0.1:{logtoAdminPort}";
 var logtoIssuer = $"{logtoBase}/oidc";
+var storeDedicatedBase = $"http://127.0.0.1:{storeDedicatedPort}";
 
 // AUTH_ADAPTER for the data plane. The DEFAULT IS STILL `stub`, deliberately: the dashboard, the
 // admin console and the storefront all sign in through `/dev/login/*`, which exists only while
 // the stub is the adapter. `MERCATUS_AUTH_ADAPTER=oidc aspire run` swaps the whole data plane
 // onto Logto, and nothing else about the topology changes (CC1).
 var authAdapter = Environment.GetEnvironmentVariable("MERCATUS_AUTH_ADAPTER") is "oidc" ? "oidc" : "stub";
-var fakeBankBase = $"http://127.0.0.1:{FakeBankPort}";
-var storefrontBase = $"http://127.0.0.1:{StorefrontPort}";
-var traefikEntrypoint = $"--entrypoints.web.address=:{TraefikPort}";
+var traefikEntrypoint = $"--entrypoints.web.address=:{traefikPort}";
 
 // The generated Postgres superuser password is random and may contain characters that are not
 // safe in a URL. Every connection string here is a postgres:// URL (BUILD-PLAN 8.2), so the
@@ -160,8 +178,8 @@ var logto = builder.AddContainer("logto", "svhd/logto", "1.43.0")
     .WithEnvironment("DB_URL", SuperuserUrl(pgLogto, "logto"))
     .WithEnvironment("ENDPOINT", logtoBase)
     .WithEnvironment("ADMIN_ENDPOINT", logtoAdminBase)
-    .WithHttpEndpoint(port: LogtoPort, targetPort: 3001, name: "core")
-    .WithHttpEndpoint(port: LogtoAdminPort, targetPort: 3002, name: "admin")
+    .WithHttpEndpoint(port: logtoPort, targetPort: 3001, name: "core")
+    .WithHttpEndpoint(port: logtoAdminPort, targetPort: 3002, name: "admin")
     // /api/status answers **204**, and WithHttpHealthCheck defaults to expecting 200 -- leaving
     // the default makes the resource never go healthy and every WaitFor on it hang forever, with
     // nothing in the log but "changed state: Starting -> Waiting". There is no /health.
@@ -189,15 +207,22 @@ var logtoBootstrap = builder.AddExecutable("logto-bootstrap", "pnpm", repoRoot,
     .WithEnvironment("LOGTO_DB_URL", SuperuserUrl(pgLogto, "logto"))
     .WithEnvironment("IDENTITY_CACHE_PATH", identityCacheFromPackage)
     .WithEnvironment("IDENTITY_OUT", "../../.identity/bootstrap.json")
-    .WithEnvironment("STORE_POOLED_URL", storePooledBase)
-    .WithEnvironment("STORE_DEDICATED_URL", "http://127.0.0.1:4003")
+    // One of the four literals: B's store is registered as a redirect target here, before that
+    // store exists and from an application model that cannot see it.
+    .WithEnvironment("STORE_DEDICATED_URL", storeDedicatedBase)
     .WaitFor(logto);
+
+// The rest of the redirect URIs are Aspire-assigned, so they are attached further down, once the
+// resources that own them have been declared. Every surface the bootstrap registers a client for
+// has to be named with the address it will ACTUALLY be reachable at -- a redirect URI Logto has
+// not been told about is rejected at the end of the login round-trip, which is the least
+// convenient moment to discover a stale port.
 
 // ---------------------------------------------------------------------------------------------
 // Services. HOST=0.0.0.0 because Traefik reaches them from inside a container, over the docker
 // host gateway; a listener bound to 127.0.0.1 is not reachable from there.
 // ---------------------------------------------------------------------------------------------
-IResourceBuilder<ExecutableResource> Node(string name, string appDirectory, int port) =>
+IResourceBuilder<ExecutableResource> Node(string name, string appDirectory) =>
     builder.AddExecutable(name, "node", $"{repoRoot}/apps/{appDirectory}",
             // Two preloads, in this order. tsx first, so the second one can BE TypeScript.
             // telemetry.ts second, so the OpenTelemetry SDK patches http and pg before the
@@ -209,31 +234,42 @@ IResourceBuilder<ExecutableResource> Node(string name, string appDirectory, int 
         // isProxied:false -- the process binds the port itself. A DCP proxy listens on
         // loopback only, and Traefik reaches these from inside a container over the host
         // gateway, so a proxied endpoint would be unreachable from the edge.
-        .WithHttpEndpoint(port: port, targetPort: port, name: "http", env: "PORT", isProxied: false)
+        //
+        // No port and no targetPort: Aspire allocates one and hands it over as PORT, which is what
+        // every one of these servers already read. A non-proxied endpoint gets the SAME number on
+        // both sides, so the port the process binds is the port the edge is told about.
+        .WithHttpEndpoint(name: "http", env: "PORT", isProxied: false)
         .WithEnvironment("HOST", "0.0.0.0")
         .WithEnvironment("NODE_ENV", "development")
         .WithOtlpExporter()
         .WithHttpHealthCheck("/health");
 
-var fakeBank = Node("fake-bank", "fake-bank", FakeBankPort)
+var fakeBank = Node("fake-bank", "fake-bank")
     // The run-mode gate (CR1). Only an AppHost sets it, and a published topology never does.
     .WithEnvironment("MERCATUS_ALLOW_FAKE_BANK", "1")
     .WithEnvironment("FAKE_BANK_HMAC_SECRET", FakeBankHmacSecret);
 
-var platform = Node("platform", "platform", PlatformPort)
+var fakeBankUrl = fakeBank.GetEndpoint("http");
+
+var platform = Node("platform", "platform")
     .WithEnvironment("DATABASE_URL", Url(pgPlatform, PlatformApp, "platform"))
     .WithEnvironment("AUTH_ADAPTER", "stub")
     .WithEnvironment("AUTH_STUB_SECRET", AuthStubSecret)
     .WithEnvironment("PLATFORM_INTERNAL_TOKEN", PlatformInternalToken)
-    .WithEnvironment("PLATFORM_URL", platformBase)
-    .WithEnvironment("FAKE_BANK_URL", fakeBankBase)
+    .WithEnvironment("FAKE_BANK_URL", fakeBankUrl)
     .WithEnvironment("FAKE_BANK_HMAC_SECRET", FakeBankHmacSecret)
     .WithReference(dbPlatform)
     .WaitFor(dbPlatform)
     .WaitForCompletion(migratePlatform)
     .WaitFor(fakeBank);
 
-var storePooled = Node("store-pooled", "store", StorePooledPort)
+// A SELF-reference, not a dependency: the control plane builds absolute URLs out of its own
+// address (the payment callbacks it hands the bank), so it has to be told what that address is.
+// No WaitFor -- a resource waiting on its own endpoint would never resolve.
+var platformUrl = platform.GetEndpoint("http");
+platform.WithEnvironment("PLATFORM_URL", platformUrl);
+
+var storePooled = Node("store-pooled", "store")
     // One image, two modes, no second code path (CC1). This is the pooled half.
     .WithEnvironment("DEPLOYMENT_MODE", "pooled")
     .WithEnvironment("DATABASE_URL", Url(pgStore, StoreApp, "store"))
@@ -245,16 +281,15 @@ var storePooled = Node("store-pooled", "store", StorePooledPort)
     // Relative to the store's own working directory, which is apps/store.
     .WithEnvironment("OIDC_JWKS_CACHE_PATH", $"../../{identityCache}")
     .WithEnvironment("SESSION_SECRET", SessionSecret)
-    .WithEnvironment("STORE_PUBLIC_URL", storePooledBase)
     .WithEnvironment("BASE_HOST", "localtest.me")
     // CE4: the store PULLS. This is the only thing pointing at the control plane, and there is
     // no route in the other direction anywhere in this file.
-    .WithEnvironment("PLATFORM_URL", platformBase)
+    .WithEnvironment("PLATFORM_URL", platformUrl)
     .WithEnvironment("PLATFORM_INTERNAL_TOKEN", PlatformInternalToken)
     // Read-only, and not a credential. The store asks the bank whether a payment settled and
     // records the answer, because "did this order get paid" is the one question the merchant
     // dashboard exists to answer -- and it used to live only in the storefront's memory.
-    .WithEnvironment("FAKE_BANK_URL", fakeBankBase)
+    .WithEnvironment("FAKE_BANK_URL", fakeBankUrl)
     // Five seconds, not the 10-second default: the demo flips a tenant to passive in the console
     // and the storefront has to refuse a checkout while somebody is still looking at the screen.
     .WithEnvironment("LICENCE_POLL_SECONDS", "5")
@@ -265,6 +300,16 @@ var storePooled = Node("store-pooled", "store", StorePooledPort)
     .WithReference(dbStore)
     .WaitFor(dbStore)
     .WaitForCompletion(migrateStore);
+
+// Self-reference again, for the same reason the control plane has one: the store mints absolute
+// URLs of its own (OIDC redirect targets, the address it hands the bank) and cannot derive them
+// from a request it has not received yet.
+var storePooledUrl = storePooled.GetEndpoint("http");
+storePooled.WithEnvironment("STORE_PUBLIC_URL", storePooledUrl);
+
+// Now that every surface exists, tell the bootstrap where each one will answer, so the clients it
+// registers carry redirect URIs that match this run rather than last week's port table.
+logtoBootstrap.WithEnvironment("STORE_POOLED_URL", storePooledUrl);
 
 if (authAdapter is "oidc")
 {
@@ -283,13 +328,25 @@ if (devSeed is not null)
 }
 
 // ---------------------------------------------------------------------------------------------
-// The edge. A FIXED port, because AppHost B binds to stable URLs later and a random one would
-// make that a lookup instead of a constant. *.localtest.me resolves to loopback without touching
-// /etc/hosts, so host-based tenant resolution (3.6) is exercised for real rather than faked with
-// a Host header.
+// The edge. The ONE fixed service port left, because AppHost B binds to stable URLs later and a
+// random one would make that a lookup instead of a constant. *.localtest.me resolves to loopback
+// without touching /etc/hosts, so host-based tenant resolution (3.6) is exercised for real rather
+// than faked with a Host header.
+//
+// Its routing table used to be a checked-in dynamic.yml full of the ports from 8.1. Those ports
+// are now assigned per run, so the file is generated from the same EndpointReferences every other
+// resource is configured with, into a directory Traefik bind-mounts. WaitForCompletion, not
+// WaitFor: the config has to be ON DISK before the container starts, or the file provider loads an
+// empty directory and every route 404s until somebody touches the file.
 // ---------------------------------------------------------------------------------------------
+var edgeConfig = builder.AddExecutable("edge-config", "node", ".", "traefik/write-dynamic.mjs")
+    .WithEnvironment("MERCATUS_EDGE_OUT", ".edge/dynamic.yml")
+    .WithEnvironment("MERCATUS_EP_PLATFORM", platformUrl)
+    .WithEnvironment("MERCATUS_EP_BANK", fakeBankUrl)
+    .WithEnvironment("MERCATUS_EP_STORE_POOLED", storePooledUrl);
+
 builder.AddContainer("traefik", "traefik", "v3.5")
-    .WithBindMount("traefik", "/etc/traefik/dynamic", isReadOnly: true)
+    .WithBindMount(".edge", "/etc/traefik/dynamic", isReadOnly: true)
     // The services run on the HOST, not in the container network. host-gateway is the docker
     // spelling of "the machine this container is running on".
     .WithContainerRuntimeArgs("--add-host=host.docker.internal:host-gateway")
@@ -304,11 +361,12 @@ builder.AddContainer("traefik", "traefik", "v3.5")
         "--api.dashboard=false",
         "--accesslog=true",
         "--log.level=INFO")
-    .WithEndpoint(port: TraefikPort, targetPort: TraefikPort, scheme: "http", name: "web")
+    .WithEndpoint(port: traefikPort, targetPort: traefikPort, scheme: "http", name: "web")
     // The health check goes through the edge to the store, so "traefik is healthy" means the
     // whole path is -- routing, the host gateway and the backend -- not just that a process
     // is listening.
     .WithHttpHealthCheck("/health", endpointName: "web")
+    .WaitForCompletion(edgeConfig)
     .WaitFor(storePooled)
     .WaitFor(platform)
     .WaitFor(fakeBank);
@@ -322,19 +380,18 @@ builder.AddContainer("traefik", "traefik", "v3.5")
 // differ from AppHost B's copies by their environment and nothing else. Both binaries live under
 // the APP's own node_modules; pnpm does not hoist, so there is nothing at the repo root.
 // ---------------------------------------------------------------------------------------------
-IResourceBuilder<ExecutableResource> Web(string name, string appDirectory, int port, params string[] args) =>
+IResourceBuilder<ExecutableResource> Web(string name, string appDirectory, params string[] args) =>
     builder.AddExecutable(name, "node", $"{repoRoot}/apps/{appDirectory}", args)
-        .WithHttpEndpoint(port: port, targetPort: port, name: "http", env: "PORT", isProxied: false)
+        .WithHttpEndpoint(name: "http", env: "PORT", isProxied: false)
         .WithEnvironment("NODE_ENV", "development")
         .WithOtlpExporter();
 
-Web("storefront", "storefront", StorefrontPort, "node_modules/next/dist/bin/next", "dev")
+var storefront = Web("storefront", "storefront", "node_modules/next/dist/bin/next", "dev")
     // No TENANT_SLUG: this process is POOLED, so `/` lists the stores and `/t/:slug` is one of
     // them. That one absent variable is the whole of the mode difference in this app.
     .WithEnvironment("STOREFRONT_TENANT_SLUGS", "acme,borg")
-    .WithEnvironment("STORE_API_URL", storePooledBase)
-    .WithEnvironment("STOREFRONT_PUBLIC_URL", storefrontBase)
-    .WithEnvironment("FAKE_BANK_URL", fakeBankBase)
+    .WithEnvironment("STORE_API_URL", storePooledUrl)
+    .WithEnvironment("FAKE_BANK_URL", fakeBankUrl)
     .WithEnvironment("FAKE_BANK_HMAC_SECRET", FakeBankHmacSecret)
     // AppHost B runs the same package out of the same directory. Without a distDir of its own,
     // whichever `next dev` starts second writes over the first one's build output.
@@ -347,16 +404,54 @@ Web("storefront", "storefront", StorefrontPort, "node_modules/next/dist/bin/next
 // 0.0.0.0, not 127.0.0.1: Traefik reaches these from inside a container over the docker host
 // gateway, and the demo is supposed to be reachable through ONE port (dash.localtest.me:8080,
 // console.localtest.me:8080). strictPort in each vite.config.ts is what keeps the number fixed.
-Web("dashboard", "dashboard", DashboardPort,
+var dashboard = Web("dashboard", "dashboard",
         "node_modules/vite/bin/vite.js", "--host", "0.0.0.0")
-    .WithEnvironment("VITE_STORE_API_URL", storePooledBase)
+    .WithEnvironment("VITE_STORE_API_URL", storePooledUrl)
     .WithHttpHealthCheck("/")
     .WaitFor(storePooled);
 
-Web("admin", "admin", AdminPort,
+var admin = Web("admin", "admin",
         "node_modules/vite/bin/vite.js", "--host", "0.0.0.0")
-    .WithEnvironment("VITE_PLATFORM_URL", platformBase)
+    .WithEnvironment("VITE_PLATFORM_URL", platformUrl)
     .WithHttpHealthCheck("/")
     .WaitFor(platform);
+
+// ---------------------------------------------------------------------------------------------
+// The last three backends the edge routes to, and the redirect URIs identity has to know about.
+// Both are attached here rather than at the declaration above because a C# variable has to exist
+// before it can be referenced, and these three resources are declared after both consumers.
+// ---------------------------------------------------------------------------------------------
+var storefrontUrl = storefront.GetEndpoint("http");
+var dashboardUrl = dashboard.GetEndpoint("http");
+var adminUrl = admin.GetEndpoint("http");
+
+storefront.WithEnvironment("STOREFRONT_PUBLIC_URL", storefrontUrl);
+
+edgeConfig
+    .WithEnvironment("MERCATUS_EP_STOREFRONT", storefrontUrl)
+    .WithEnvironment("MERCATUS_EP_DASHBOARD", dashboardUrl)
+    .WithEnvironment("MERCATUS_EP_ADMIN", adminUrl);
+
+logtoBootstrap
+    .WithEnvironment("STOREFRONT_URL", storefrontUrl)
+    .WithEnvironment("DASHBOARD_URL", dashboardUrl)
+    .WithEnvironment("ADMIN_URL", adminUrl);
+
+// ---------------------------------------------------------------------------------------------
+// Where everything ended up. With no fixed ports there is no table to read them off, so the run
+// writes one: the e2e suite loads it instead of carrying its own copy of 8.1, and a human who
+// wants the storefront can cat it. Repo root, because AppHost B writes its half beside it.
+// ---------------------------------------------------------------------------------------------
+builder.AddExecutable("stack-manifest", "node", repoRoot, "aspire/scripts/write-stack-manifest.mjs")
+    .WithEnvironment("MERCATUS_MANIFEST_OUT", ".stack/apphost-a.json")
+    .WithEnvironment("MERCATUS_EP_PLATFORM", platformUrl)
+    .WithEnvironment("MERCATUS_EP_STORE_POOLED", storePooledUrl)
+    .WithEnvironment("MERCATUS_EP_BANK", fakeBankUrl)
+    .WithEnvironment("MERCATUS_EP_STOREFRONT", storefrontUrl)
+    .WithEnvironment("MERCATUS_EP_DASHBOARD", dashboardUrl)
+    .WithEnvironment("MERCATUS_EP_ADMIN", adminUrl)
+    .WithEnvironment("MERCATUS_EP_EDGE", edgeBase)
+    .WithEnvironment("MERCATUS_EP_LOGTO", logtoBase)
+    .WithEnvironment("MERCATUS_EP_LOGTO_ADMIN", logtoAdminBase);
 
 builder.Build().Run();
