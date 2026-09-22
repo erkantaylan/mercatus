@@ -360,3 +360,30 @@ file is where they are amended.
 - **No fastify instrumentation.** `@opentelemetry/instrumentation-fastify` is deprecated in favour
   of `@fastify/otel`, a plugin every app would have to register, and all it adds is a span per
   hook. `instrumentation-http` + `instrumentation-pg` give the server span and the query under it.
+
+## Task 06 — the cross-tenant leak suite
+
+- **The leak suite owns its database.** `@testcontainers/postgresql` brings up `postgres:18.3` in
+  a vitest `globalSetup` and runs the real init order (roles → drizzle migrate → RLS). BL1's
+  failure mode is not a wrong suite, it is a suite that does not run: the previous shape read
+  `DATABASE_URL` and `describe.runIf`'d itself away, so a green `pnpm test` on a machine with no
+  Postgres proved nothing.
+- **One container per package, not per file.** `fileParallelism: false` and
+  `project.provide` / `inject`, so `order-number.test.ts` shares it. That test lost its
+  `describe.runIf(hasDb)` too.
+- **`MERCATUS_LEAK_SABOTAGE=<table>` is a committed test affordance, not scaffolding.** It swaps
+  one table's isolation policy for `using (true) with check (true)` after the migrations. A leak
+  suite that has never been seen to fail is not evidence, and the experiment has to be repeatable
+  by the next person in one command rather than re-derived. It is also in `turbo.json`'s `test`
+  env list so turbo cannot serve a cached green over a sabotaged run.
+- **Sabotage by policy swap, never by `disable row level security`.** Leaving RLS enabled and
+  forced keeps the coverage assertions green, so only the leak assertions redden — which is what
+  identifies the assertions doing the work.
+- **`cpu-features` and `ssh2` are answered `false` in `allowBuilds`.** They are dockerode's
+  optional `ssh://` transport; this repo uses the local docker socket. First denied build scripts
+  in the workspace — the previous entries are all `true`.
+- **Testcontainers pins `postgres:18.3`, matching what the RLS behaviour was verified on.** A
+  floating tag would make an RLS regression look like a flake.
+- **`tenants` is in the suite even though it has no RLS**, asserted through grants instead:
+  `mercatus_app` selects, and insert/update/delete each come back `permission denied` / 42501.
+  BE4 is about checking each store separately, and "no policy" is not "no test".

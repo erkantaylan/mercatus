@@ -5,6 +5,11 @@ packages:
 # Versions are pinned here and nowhere else. Every package writes "catalog:" and gets this.
 # Resolved and checked 2026-09-22 (BUILD-PLAN.md §2).
 allowBuilds:
+  # dockerode (testcontainers) -> ssh2 -> cpu-features. Both are the optional ssh:// docker
+  # transport and its native CPU probe; this repo talks to the local docker socket, so neither
+  # is built. Answered "no" deliberately, not left unanswered.
+  cpu-features: false
+  ssh2: false
   esbuild: true
   protobufjs: true
 
@@ -45,6 +50,9 @@ catalog:
   turbo: 2.11.2
   drizzle-kit: 0.31.11
   vitest: 5.0.1
+  # The leak suite (BL1) brings up its own Postgres so it can never silently skip.
+  testcontainers: 12.1.0
+  "@testcontainers/postgresql": 12.1.0
   eslint: 10.11.0
   "@eslint/js": ^10.0.1
   typescript-eslint: 8.70.1

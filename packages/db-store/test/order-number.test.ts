@@ -10,7 +10,7 @@ import { randomUUID } from 'node:crypto';
 
 import { runInTenant } from '@mercatus/core';
 import { sql } from 'drizzle-orm';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 
 import type { StoreDbHandle } from '../src/client.js';
 import { createStoreDb } from '../src/client.js';
@@ -18,10 +18,6 @@ import { ensureOrderCounter, placeOrder, takeOrderNumber } from '../src/reposito
 import { insertProduct } from '../src/repositories/products.js';
 import { mirrorTenant } from '../src/repositories/tenants.js';
 import { withExplicitTenantTx, withTenantTx } from '../src/tenant-tx.js';
-
-const appUrl = process.env['DATABASE_URL'];
-const adminUrl = process.env['DATABASE_ADMIN_URL'];
-const hasDb = Boolean(appUrl && adminUrl);
 
 const A = { id: randomUUID(), slug: `num-a-${randomUUID().slice(0, 8)}` };
 const B = { id: randomUUID(), slug: `num-b-${randomUUID().slice(0, 8)}` };
@@ -31,9 +27,10 @@ let admin: StoreDbHandle | undefined;
 const productIds = new Map<string, string>();
 
 beforeAll(async () => {
-  if (!hasDb) return;
-  app = createStoreDb(appUrl!, { max: 4 });
-  admin = createStoreDb(adminUrl!, { max: 2 });
+  // The database is the one test/global-setup.ts brought up. No env var, so no silent skip.
+  const urls = inject('storeDb');
+  app = createStoreDb(urls.appUrl, { max: 4 });
+  admin = createStoreDb(urls.adminUrl, { max: 2 });
   for (const tenant of [A, B]) {
     const productId = await withExplicitTenantTx(admin.db, tenant.id, async (tx) => {
       await mirrorTenant(tx, { id: tenant.id, slug: tenant.slug, name: tenant.slug });
@@ -83,7 +80,7 @@ async function checkout(tenant: { id: string; slug: string }, subject: string): 
   );
 }
 
-describe.runIf(hasDb)('order numbering (BG2)', () => {
+describe('order numbering (BG2)', () => {
   it('starts at 1 for each tenant and counts up independently', async () => {
     expect(await checkout(A, 'shopper-a1')).toBe(1);
     expect(await checkout(A, 'shopper-a2')).toBe(2);

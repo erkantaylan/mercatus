@@ -21,9 +21,11 @@
     "postgres": "catalog:"
   },
   "devDependencies": {
+    "@testcontainers/postgresql": "catalog:",
     "@types/node": "catalog:",
     "drizzle-kit": "catalog:",
     "eslint": "catalog:",
+    "testcontainers": "catalog:",
     "tsx": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
