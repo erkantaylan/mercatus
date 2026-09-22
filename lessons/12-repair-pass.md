@@ -5,9 +5,9 @@
 - A single-column FK **crosses tenants**, whatever your RLS says: referential-integrity checks run
   with row security OFF, so `with check` validates a row's own `tenant_id` and never its parent.
   The fix is `unique (id, tenant_id)` on the parent and a composite FK. Verified on 18.3.
-- A composite FK works against a **UNIQUE CONSTRAINT**. `uniqueIndex(...)` in drizzle emits
-  `CREATE UNIQUE INDEX`, which pg does accept as an FK target, but `unique('name').on(...)` emits
-  `ADD CONSTRAINT ... UNIQUE` and is the unambiguous spelling. Both are in the schema now.
+- The FK target needs a unique constraint on exactly those columns. `unique('name').on(a, b)` in
+  drizzle emits `ADD CONSTRAINT ... UNIQUE`, which is the spelling to use; `uniqueIndex(...)`
+  emits `CREATE UNIQUE INDEX` and was not tried as an FK target here.
 - **drizzle-kit 0.31.11 emits `ADD CONSTRAINT ... UNIQUE` AFTER the foreign keys that reference
   it** in an incremental migration, and Postgres refuses that ("there is no unique constraint
   matching given keys for referenced table"). A from-scratch generation is fine, because the
@@ -63,7 +63,7 @@ grant execute on function mercatus_tenant_by_slug(text) to mercatus_app;
   (`acme` must exist for "refuses an installation for a pooled tenant"). Two failures on the first
   honest run, both fixture, neither a product bug.
 - After this, `pnpm -r test` is 235 tests, 0 skipped: core 26, contracts 25, db-platform 11,
-  fake-bank 17, platform 22, db-store 98, store 36.
+  fake-bank 17, platform 22, db-store 98, store 45.
 
 ## Aspire / the edge
 
