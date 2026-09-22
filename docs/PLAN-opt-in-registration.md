@@ -62,6 +62,12 @@ Each phase ends with a gate that **executes**. Commit per phase. Never push — 
 
 ### Phase 0 — put the dedicated instance on real OIDC *first*
 
+> **Status — ✅ done, `1c6f609`.** Gate executed: a real browser login round-trip completed
+> against the dedicated store, and a shopper signed in at a pooled store was recognised at the
+> dedicated one (same subject). Two things were broken, both small:
+> `IDENTITY_CACHE_PATH_DEDICATED` was never set by AppHost A, and A registered `127.0.0.1` while
+> B asked for `localhost`, which Logto compares as strings. `diary/14`, `lessons/14`.
+
 Today `AUTH_ADAPTER` defaults to `stub` in both AppHosts; `MORNING.md` confirms the browser suite
 drives the stub, and AppHost B's own comment says its `ext-identity` reference is "unused while
 this instance runs on the stub adapter".
@@ -77,6 +83,16 @@ redirect URI gets registered.
   sequence. `packages/identity/scripts/login-round-trip.sh` exists and may help.
 
 ### Phase 1 — opt-in registration
+
+> **Status — ✅ done, `93fd588`.** All nine items landed, including the deletion in item 8:
+> `STORE_DEDICATED_URL`, `MERCATUS_STORE_DEDICATED_PORT` and `storeDedicatedBase` are gone and
+> four fixed ports became three. Gate executed: B started on an Aspire-assigned port, registered,
+> the redirect URI was confirmed through the Management API, a real browser login completed, and
+> a mismatched host was refused with the generic 401. Item 4 turned out to be the easy part
+> (`packages/identity/src/logto.ts` already had the client); the awkward part was getting the M2M
+> secret to the platform without letting it read Logto's Postgres — a 0600 handoff file, opened
+> lazily. One deviation worth knowing: a failed host check does **not** burn the bootstrap token
+> (`FR` in `docs/V2.md`). `diary/15`, `lessons/15`.
 
 1. Add `baseUrl` and `dashboardUrl` to the register request. Contracts first
    (`packages/contracts`), then `apps/store/src/provision.ts` — the instance knows its own
@@ -108,6 +124,11 @@ dedicated store. Then confirm a mismatched host is rejected.
 
 ### Phase 2 — parameterise AppHost B
 
+> **Status — ✅ done, `106a39b`.** Gate executed: `MERCATUS_TENANT_SLUG=zenith` reproduced v1.0.0
+> behaviour with the suite green. Every resource name, container, database, path and manifest
+> file derives from the slug, and the e2e helpers glob `.stack/apphost-*.json` and key per
+> instance. `diary/16`, `lessons/16`.
+
 One AppHost, any tenant, by environment:
 
 ```bash
@@ -128,6 +149,15 @@ instance rather than on the fixed names `store_dedicated` / `storefront_dedicate
 suite green.
 
 ### Phase 3 — prove it with a second dedicated tenant
+
+> **Status — ✅ done, `f7f3d0f`.** Gate executed: two pooled and two dedicated tenants serving at
+> once, one shopper account buying from all four, each merchant's dashboard showing only its own
+> orders, and both dedicated stores still completing checkout with the control plane stopped.
+> Two blockers were real and neither was in the plan: a tenant bought after A started had no
+> Logto organization (fixed by `ensureOrganizationBySlug` **at the control plane**, not by
+> teaching A a slug list), and the Aspire CLI treats a running AppHost as a singleton keyed on
+> its file path, so two Bs need two directories — hence `aspire/scripts/run-dedicated.sh`.
+> `diary/17`, `lessons/17`.
 
 Add **orion** with zero edits to AppHost A: create the installation in the platform console (or
 via the API), take the token, run AppHost B a second time with a different slug.
@@ -160,3 +190,22 @@ control plane and show both dedicated stores still completing checkout.
 Two pooled tenants, two dedicated tenants, real OIDC on both planes, one shopper account across
 all of them, `MERCATUS_STORE_DEDICATED_PORT` gone, a host-pinned bootstrap token, and a new
 dedicated tenant costing one command and zero edits to AppHost A.
+
+> **Status — met as a running system, not as a self-proving one.** Five of the seven items are met
+> outright. "Real OIDC on both planes" is true of the system and **not** of the evidence: specs
+> `01`–`04` skip under `AUTH_ADAPTER=oidc` and spec `05` skips under the stub, so no single run
+> demonstrates the whole list (22 passed / 6 skipped on stub; 6 passed / 22 skipped on oidc). The
+> host pin is met with an exception the docs did not state. Item by item, with the nine open
+> findings from the acceptance run, is [`docs/V2.md`](./V2.md) §6 and §4.
+>
+> **An unplanned round happened after the first acceptance run failed the release** — `e06df86`,
+> `bebcf46`, `8350fdb`, `3661b61`. `MERCATUS_AUTH_ADAPTER=oidc` put the store API on a real issuer
+> and left both browser front ends unable to sign anybody in, on both planes, because they called
+> `/dev/login/*` directly and those routes exist only under the stub. "Real OIDC on both planes"
+> and "one shopper account buying from four shops in a browser" were mutually exclusive until it.
+> `diary/18`, `lessons/18`.
+>
+> **The worst thing left open is `FJ`**: a control-plane rebuild silently kills sign-in at every
+> already-running dedicated box, and the documented recovery — restarting the box — recreates its
+> Postgres and destroys that merchant's orders. It is `EV` in `docs/OPEN-DEFECTS.md`, understated
+> there.

@@ -190,43 +190,69 @@ AppHost B *cannot* reference A's databases, since they are not in its model.
 
 ## Running it
 
-**Two AppHosts, two commands.** AppHost A is everything we run; AppHost B is one customer's
-server. `aspire run` is always `--detach`, and each is stopped from its own directory.
+**Two AppHosts.** AppHost A is everything we run; AppHost B is one customer's server, once per
+tenant. `aspire run` is always `--detach`, and each is stopped from its own directory.
 
 ```bash
-# A -- control plane, identity, fake-bank, the pooled store, the edge on 8080
+# A -- control plane, identity, fake-bank, the pooled store, the edge on 28080
 cd aspire/AppHostA && aspire run --detach --non-interactive --nologo --format Json
 
-# B -- "Zenith's VPS": its own Postgres, the same store image, DEPLOYMENT_MODE=dedicated
-cd aspire/AppHostB && aspire run --detach --non-interactive --nologo --format Json
+# B -- one dedicated box per tenant. This is the documented path and the one the e2e suite
+#      expects; it generates a run directory so several can serve at once (see below).
+aspire/scripts/run-dedicated.sh zenith
+aspire/scripts/run-dedicated.sh orion
 
-# and back down, each from its own directory
+# and back down -- the dedicated boxes first, so their credentials stay valid
+aspire/scripts/stop-dedicated.sh orion
+aspire/scripts/stop-dedicated.sh zenith
 cd aspire/AppHostA && aspire stop --non-interactive --nologo
-cd aspire/AppHostB && aspire stop --non-interactive --nologo
 ```
+
+`cd aspire/AppHostB && MERCATUS_TENANT_SLUG=zenith aspire run --detach …` is the same thing
+without the generated directory, and is fine for exactly one dedicated box.
+
+**`aspire stop` does not clean up after itself, twice.** `.stack/apphost-*.json` are left on disk
+naming ports that are now dead — a later run overwrites them, but a suite run against a stopped
+stack spends 90 s timing out on them instead of saying "nothing is running", so `rm -f
+.stack/apphost-*.json` belongs in the teardown. And the Aspire CLI leaves a long-lived
+`aspire-managed nuget search …` process per generated run directory; `pgrep -af 'aspire-managed
+nuget'` finds them and they have to be killed by pid.
 
 Each directory holds an `aspire.config.json` naming its own `apphost.cs`, which is how the CLI
 knows which application is meant; from anywhere else, `aspire run --apphost aspire/AppHostB`
-says it explicitly. The two dashboards are on **15230** (A) and **15240** (B), each printing a
-one-time login token on start — B's OTLP and resource-service ports are moved in its
-`apphost.run.json`, or the two collide.
+says it explicitly. A's dashboard is on **15230**, from its `apphost.run.json`, and prints a
+one-time login token on start. **B's is not a number you can write down**: `run-dedicated.sh`
+passes `--isolated`, which randomises the three CLI ports in `apphost.run.json` (`15240`, `19081`,
+`20015`) so two dedicated boxes do not collide — observed across four starts as 35345, 35083,
+37723 and 43177. The address is in the JSON the detached run prints (`dashboardUrl`). Only a bare
+`aspire run` from `aspire/AppHostB` keeps 15240.
 
 B needs A running when it starts: it presents a one-time bootstrap token to
 `POST /installations/register`, is given a per-instance credential (`CE1`) which it writes to
-`.instance/zenith.json`, and polls with that from then on. B's application model contains no
+`.instance/<slug>.json`, and polls with that from then on. B's application model contains no
 control-plane database — it reaches A only through `AddExternalService`, over
 `platform.localtest.me:28080` and `bank.localtest.me:28080`. `*.localtest.me` resolves to
 `127.0.0.1` without touching `/etc/hosts`.
 
-**`aspire stop` on A destroys A's database with it**, so a rebuilt control plane has never heard
-of that installation. B's install command therefore *checks* its credential on every start and
-re-registers when the control plane refuses it — the dev bootstrap token is re-seeded unspent on
-every fresh platform database, so `aspire stop && aspire run` on B is the whole recovery and
-nothing has to be edited or deleted by hand. (Until this was fixed the box kept polling with a
-dead token, got 401 for ever, and reported itself healthy the whole time.) The catch is that this
-check runs **only at B's start** — a B that is already running when A is rebuilt never recovers;
-see **The demo** below. An unreachable control plane is *not* a refusal: B keeps
-its credential and boots anyway (`CG1`).
+**`aspire stop` on A destroys A's database with it** — no AppHost declares `WithDataVolume`, so
+A's Postgres and Logto's are both ephemeral — and a rebuilt control plane has never heard of that
+installation. B's install command therefore *checks* its credential on every start and
+re-registers when the control plane refuses it; the dev bootstrap token is re-seeded unspent on
+every fresh platform database, so nothing has to be edited or deleted by hand. (Until this was
+fixed the box kept polling with a dead token, got 401 for ever, and reported itself healthy the
+whole time.) An unreachable control plane is *not* a refusal: B keeps its credential and boots
+anyway (`CG1`).
+
+**The catch is that this check runs only at B's *start*, and it is worse than it sounds
+(`FJ`, `EV`).** A dedicated box that is already running when A is rebuilt never recovers on its
+own, and three things are true of it at once: `GET /installations` answers `total: 0`, so the
+platform console reads zero registered instances while two boxes are selling; `GET /auth/login`
+on that box 302s to an issuer that answers **HTTP 400 `oidc.invalid_client`**, because the
+per-installation OIDC client died with Logto's Postgres, so **no new shopper or staff member can
+sign in** — existing cookie sessions keep working, which is exactly what hides it; and the
+documented recovery, restarting the box, recreates `pg-tenant-<slug>` from scratch and **takes
+that merchant's orders with it** (measured: 4 orders → 0). See
+[`docs/V2.md`](./docs/V2.md) §4.
 
 **Every page of A's is served on one port**, 28080, through the edge — one hostname per surface,
 all of them `*.localtest.me`, which resolves to loopback with no `/etc/hosts` entry:
@@ -332,8 +358,9 @@ gitignored: a build artifact, not a second copy to keep in step. `--isolated` is
 it randomises the three CLI ports in `apphost.run.json` -- it simply is not sufficient.
 
 `packages/e2e/tests/helpers/stack.ts` globs `.stack/apphost-*.json` and drives whatever it finds;
-an instance with no file is one that is not up, which is exactly what makes its spec skip. Both
-Aspire dashboards (**15230** and **15240**) list the same addresses if you would rather click.
+an instance with no file is one that is not up, which is exactly what makes its spec skip. A's
+Aspire dashboard (**15230**) and each dedicated box's (randomised by `--isolated`; the address is
+in the run's JSON) list the same addresses if you would rather click.
 
 **Three** ports are still fixed, because AppHost B has to find A without reading A's application
 model: the edge (`28080`) and identity with its admin API (`28311`, `28312`). Each reads an
@@ -347,7 +374,9 @@ bootstrap token, says where it lives, and the control plane registers exactly th
 issuer and hands back `{issuer, clientId, clientSecret}` of a client minted for that installation
 alone (`CE1`). The token is **host-pinned**: an installation records one hostname when it is
 minted, and a `baseUrl` on any other host is refused with the same generic 401 an unknown token
-gets, the real reason in the log (`GK`, `S1`). Adding a dedicated tenant is now zero edits to
+gets, the real reason in the log (`GK`, `S1`). One exception worth knowing, because "one-time"
+does not cover it (`FR`): a **failed** host check does not burn the token, so a typo is
+recoverable — and so is a guess, for anyone holding a leaked token. Adding a dedicated tenant is now zero edits to
 AppHost A. `DELETE /installations/:id` is the other half, built at the same time (`CK1`): it
 deletes that instance's client at the issuer and takes its redirect URIs back out of the shared
 ones -- the ones nobody else is still serving on, which is a refcount over the installation rows
@@ -412,12 +441,15 @@ aspire/scripts/stop-dedicated.sh orion  && aspire/scripts/run-dedicated.sh orion
 ```
 
 Stopping A destroyed A's Postgres, so the rebuilt control plane has never heard of that
-installation: `GET /installations` answers `total: 0` and B's stored credential gets a **404**. B
-keeps polling — `lastCheckedAt` advances — but never succeeds again, because re-registration
-happens in B's **install command, at start** (`apps/store/src/provision.ts`). A restarted B
-re-registers, and the store is back to `active/healthy` with `checkout: open` on the next poll.
-Giving the poll agent the same re-register branch would make "bring A back" the whole recovery;
-it is the first item in [`docs/MORNING.md`](./docs/MORNING.md) §6.
+installation: `GET /installations` answers `total: 0`, B's stored credential gets a **404**, and
+under `oidc` that box's sign-in is dead too — its per-installation client went with Logto's
+database, so the issuer answers `oidc.invalid_client`. B keeps polling — `lastCheckedAt` advances
+— but never succeeds again, because re-registration happens in B's **install command, at start**
+(`apps/store/src/provision.ts`). A restarted B re-registers and is back to `active/healthy` with
+`checkout: open` on the next poll — **and starts with an empty database**, because its Postgres
+has no volume either. On a laptop that costs a re-seed; the same sentence about a customer's box
+is a data-loss incident. Giving the poll agent the same re-register branch, and both Postgres
+resources a `WithDataVolume`, is the first item in [`docs/V2.md`](./docs/V2.md) §7.
 
 If what you want is the *catches-up* story rather than the destroyed-database one, kill the
 platform **process** instead of the AppHost (`ss -ltnp | grep ":$(jq -r '.endpoints.platform'
@@ -436,12 +468,20 @@ several storefronts on `localhost` share one jar and overwrite each other's shop
 **The checks.**
 
 ```bash
-pnpm -r test                    # 261 tests, 0 skipped, no stack needed
+pnpm -r test                    # 261 tests, 0 skipped, no stack needed -- and no browser at all
 pnpm turbo run typecheck lint   # 26 tasks
-pnpm test:e2e                   # 22 Playwright tests in real Chrome, against the live
-                                # four-tenant topology: AppHost A and BOTH dedicated boxes
-MERCATUS_E2E_REQUIRE_OIDC=1 pnpm test:e2e    # ... with the whole stack on MERCATUS_AUTH_ADAPTER=oidc
+pnpm test:e2e                   # on a STUB stack: 22 passed, 6 skipped, in real Chrome against
+                                # the live four-tenant topology: AppHost A and BOTH dedicated boxes
+MERCATUS_E2E_REQUIRE_OIDC=1 pnpm test:e2e    # on an OIDC stack: 6 passed, 22 skipped
 ```
+
+**Those last two are two runs of the same command against two configurations, not the same tests
+twice** (`FK`). `01`–`04` mint a fresh shopper per run, which a real issuer cannot do without the
+Management API, so they skip themselves under `oidc`; `05` is the four-tenant demo on Logto and
+skips under the stub. `MERCATUS_E2E_REQUIRE_OIDC=1` only guarantees that `05` does not skip — it
+says nothing about the 22 that do. So on an OIDC stack the passive-licence, outage,
+cross-tenant-isolation and four-tenant files never execute, and those claims have automated
+evidence under the **stub adapter only**.
 
 `pnpm test:e2e` **fails rather than skips** when a dedicated instance it is claiming is not
 running. What it claims is `MERCATUS_E2E_DEDICATED`, default `zenith,orion`; narrowing it is an
@@ -461,15 +501,23 @@ to run against a stack that is down and names the `aspire run` that is missing.
 Every resource in both AppHosts is prefixed by what it *is*, so the dashboard groups by kind
 rather than by the order someone declared things. Tenant-owned resources carry the word `tenant`.
 
-| Prefix | | AppHost A | AppHost B |
+Since **v2.0.0 phase 2** every one of AppHost B's names is derived from `MERCATUS_TENANT_SLUG`,
+so the column below is a template and `zenith` is only what the default slug makes it.
+
+| Prefix | | AppHost A | AppHost B, for slug `{s}` |
 |---|---|---|---|
-| `api-` | HTTP APIs we wrote | `api-platform`, `api-store-pooled`, `api-fake-bank` | `api-store-tenant-zenith` |
-| `web-` | browser-facing front ends | `web-storefront-pooled`, `web-dashboard-pooled`, `web-console` | `web-storefront-tenant-zenith`, `web-dashboard-tenant-zenith` |
-| `pg-` | Postgres servers | `pg-platform`, `pg-store`, `pg-identity` | `pg-tenant-zenith` |
-| `db-` | databases on them | `db-platform`, `db-store`, `db-identity` | `db-tenant-zenith` |
+| `api-` | HTTP APIs we wrote | `api-platform`, `api-store-pooled`, `api-fake-bank` | `api-store-tenant-{s}` |
+| `web-` | browser-facing front ends | `web-storefront-pooled`, `web-dashboard-pooled`, `web-console` | `web-storefront-tenant-{s}`, `web-dashboard-tenant-{s}` |
+| `pg-` | Postgres servers | `pg-platform`, `pg-store`, `pg-identity` | `pg-tenant-{s}` |
+| `db-` | databases on them | `db-platform`, `db-store`, `db-identity` | `db-tenant-{s}` |
 | `infra-` | third-party containers | `infra-identity` (Logto), `infra-edge` (Traefik) | — |
-| `task-` | one-shot, runs and exits | `task-migrate-platform`, `task-migrate-store`, `task-seed-tenants`, `task-identity-bootstrap`, `task-edge-config`, `task-stack-manifest` | `task-migrate-tenant-zenith`, `task-provision-tenant-zenith`, `task-stack-manifest` |
+| `task-` | one-shot, runs and exits | `task-migrate-platform`, `task-migrate-store`, `task-seed-tenants`, `task-identity-bootstrap`, `task-edge-config`, `task-stack-manifest` | `task-migrate-tenant-{s}`, `task-provision-tenant-{s}`, `task-stack-manifest` |
 | `ext-` | services owned by the *other* AppHost | — | `ext-control-plane`, `ext-identity`, `ext-fake-bank` |
+
+The same slug also names `.instance/{s}.json`, `.identity/store-{s}.json`, the storefront's
+`.next-{s}` build directory, `.stack/apphost-{s}.json` and the generated
+`aspire/AppHostB-{s}/` run directory. `task-stack-manifest` keeps its plain name in both, because
+it is the one resource that is about the AppHost rather than about the tenant.
 
 `web-console` is the platform console and `web-dashboard-*` is a merchant's dashboard — two
 different audiences, never one app with a flag (`BH1`), so they do not share a name either.
@@ -482,7 +530,8 @@ keep (see [`docs/architecture.md`](./docs/architecture.md) §10).
 
 | | |
 |---|---|
-| [`docs/MORNING.md`](./docs/MORNING.md) | **Start here.** What works and what does not, as of the end of the overnight build, with the commands and the priorities |
+| [`docs/V2.md`](./docs/V2.md) | **The v2.0.0 handover.** What changed, what a dedicated tenant costs now, the exact commands, the nine open findings from the acceptance run, and the definition of done item by item |
+| [`docs/MORNING.md`](./docs/MORNING.md) | What works and what does not, as of the end of the overnight build, with the commands and the priorities |
 | [`docs/OPEN-DEFECTS.md`](./docs/OPEN-DEFECTS.md) | The RLS verifier's findings, F1–F6, with the fix recorded under each |
 | [`docs/decisions-made-overnight.md`](./docs/decisions-made-overnight.md) | Every decision the design docs did not make, one bullet and one reason each |
 | [`docs/architecture.md`](./docs/architecture.md) | Service graphs — context, topology, tiers, token flow, buy-a-store, provisioning, degradation, data model, what `aspire run` starts |

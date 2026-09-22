@@ -79,7 +79,10 @@ All ten answer 200. And back down — the dedicated boxes first, so their creden
 aspire/scripts/stop-dedicated.sh orion
 aspire/scripts/stop-dedicated.sh zenith
 ( cd aspire/AppHostA && aspire stop --non-interactive --nologo )
-docker ps            # should show only chess-trainer, which is not ours
+docker ps                        # should show nothing of ours
+rm -f .stack/apphost-*.json      # aspire stop does NOT remove these; stale ones cost the e2e
+                                 # suite a 90 s timeout instead of one sentence
+pgrep -af 'aspire-managed nuget' # the CLI leaves one per generated run directory; kill by pid
 ```
 
 ### The demo, step by step
@@ -155,10 +158,12 @@ nothing about how the front ends sign in — that is the whole of the v2.0.0 rep
 topology runs on a real issuer:
 
 ```bash
-# stop everything first, then:
-MERCATUS_AUTH_ADAPTER=oidc ( cd aspire/AppHostA && aspire run --detach --non-interactive --nologo --format Json )
-MERCATUS_AUTH_ADAPTER=oidc aspire/scripts/run-dedicated.sh zenith
-MERCATUS_AUTH_ADAPTER=oidc aspire/scripts/run-dedicated.sh orion
+# stop everything first, then -- note the export: `VAR=x ( ... )` is a bash SYNTAX ERROR, and this
+# block used to be written that way.
+export MERCATUS_AUTH_ADAPTER=oidc
+( cd aspire/AppHostA && aspire run --detach --non-interactive --nologo --format Json )
+aspire/scripts/run-dedicated.sh zenith
+aspire/scripts/run-dedicated.sh orion
 
 MERCATUS_E2E_REQUIRE_OIDC=1 pnpm test:e2e     # tests/05-oidc-four-tenants.spec.ts
 ```
@@ -255,7 +260,7 @@ version pins are not repeated here.
 | **`packages/clients` was never built; no Orval, no Kubb, no generated client** | `packages/ui` took its slot in the layout. Each app has a ~40-line typed fetch wrapper that parses with the Zod contracts. Codegen is a toolchain to debug at 3am for a thirty-endpoint API |
 | **Money is an integer in minor units**, not `numeric` as the ER diagram says | removes a class of rounding bug from a POC that does not need decimals |
 | **The AppHosts are `aspire/AppHostA` and `aspire/AppHostB`**, not `control-plane` / `acme-vps` | the directory says what the docs say. The dedicated tenant is `zenith`, so nobody reads `acme` as "the dedicated one" |
-| **Traefik is on 8080 after all** | task 00 found `qbittorrent` holding it and planned 8090; it was free every night since. If a run ever dies with `bind: address already in use`, that is one line in `apphost.cs` |
+| **Traefik is on 28080** | task 00 found `qbittorrent` holding 8080 and planned 8090; the port pass (`8c72b7e`) moved the edge to **28080** and gave it the `MERCATUS_EDGE_PORT` override, so a collision is an export rather than an edit. This row said "on 8080 after all" until the v2.0.0 handover, which was three ports out of date |
 | **Foreign keys became composite `(id, tenant_id)`**, reversing task 02's "noted rather than built" | task 12 proved the single-column version was a live cross-tenant denial of service. `docs/OPEN-DEFECTS.md` F1 has the before/after transcript |
 
 ### Security and trust-boundary compromises
@@ -379,7 +384,7 @@ with the bootstrap token and carry on. Then the README's original demo script be
 "bring A back" is the whole recovery. Maybe an hour, mostly tests. This is **EV** closed.
 
 **FC. Put the whole demo behind the edge.** Point `FAKE_BANK_URL`, `VITE_STORE_API_URL` and
-`VITE_PLATFORM_URL` at `bank.`, `api.` and `platform.localtest.me:8080` in
+`VITE_PLATFORM_URL` at `bank.`, `api.` and `platform.localtest.me:28080` in
 `aspire/AppHostA/apphost.cs`, then tighten `packages/core`'s CORS from `origin: true` to that
 origin list. The two changes belong together: the second is only possible once the first is done,
 and the first is only *checkable* once the second is. That closes **EW** and **EX**, and it makes

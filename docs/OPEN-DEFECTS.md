@@ -172,11 +172,15 @@ wrote rather than something a reader has to infer.
 
 | | What is wrong | What it costs today | Where |
 |---|---|---|---|
-| **EV** | a **running** AppHost B never recovers when the control plane is rebuilt. Re-registration happens only at B's start | `aspire stop` on A destroys A's Postgres, so the installation is gone and B's instance token answers 401 for ever. Restarting B fixes it in one poll. The e2e suite's outage test kills the platform PROCESS instead, which recovers correctly | `apps/store/src/provision.ts`; the fix is the same branch in `apps/store/src/agents/licence-poll.ts` |
+| **EV** | a **running** AppHost B never recovers when the control plane is rebuilt. Re-registration happens only at B's start | Worse than this table said until the v2.0.0 acceptance run measured it (`FJ` in `docs/V2.md` §4). `aspire stop` on A destroys A's Postgres **and Logto's** — no AppHost declares `WithDataVolume` — so three things are true at once: the installation is gone and B's instance token answers 401 for ever; `GET /installations` reads `total: 0`, so the console shows zero instances while boxes are selling; and under `oidc` the per-installation client died with the issuer's database, so `/auth/login` answers `oidc.invalid_client` and **no new shopper or staff member can sign in** — existing cookie sessions keep working, which hides it. Restarting B fixes it in one poll **and recreates `pg-tenant-<slug>` from scratch**: 4 orders → 0, measured. The e2e suite's outage test kills the platform PROCESS instead, which recovers correctly | `apps/store/src/provision.ts`; the fix is the same branch in `apps/store/src/agents/licence-poll.ts`, plus a data volume on `pg-platform`, `pg-identity` and `pg-tenant-<slug>` |
 | **EW** | one port covers HTML and nothing else | every SPA XHR and the whole payment leg leave the edge: `VITE_STORE_API_URL`, `VITE_PLATFORM_URL` and `FAKE_BANK_URL` are direct addresses. Firewall everything but `:28080` and checkout breaks | `aspire/AppHostA/apphost.cs` |
 | **EX** | CORS is `origin: true, credentials: true` on every API | any origin is reflected and allowed to send credentials. It is also what keeps EW invisible, because nothing ever complains about the cross-origin call | `packages/core/src/http/server.ts` |
 | **CE2** | the storefront signs fake-bank requests itself, **including on a customer-owned box** | a merchant with root on their own server holds a key that can sign payment requests that bill us. `POST /payments/proxy` was never built | `aspire/AppHostB/apphost.cs` sets `FAKE_BANK_HMAC_SECRET` on the storefront |
 | **EY** | the merchant cannot see who bought | the order detail renders number, status, payment reference, lines and total, and no shopper. The data is in the store and RLS-protected; this is a gap in the dashboard | `apps/dashboard/src/routes/orders.$id.tsx` |
+
+**FJ–FR.** The v2.0.0 acceptance run added nine findings of its own, with `EV` above as the worst
+of them. They are written up in [`docs/V2.md`](./V2.md) §4 rather than copied here, because that
+file is also where the release's definition of done is answered item by item.
 
 **EZ is narrower than it was.** "The OIDC path has no automated coverage at all" is no longer
 true: `packages/e2e/tests/05-oidc-four-tenants.spec.ts` drives the whole four-tenant demo in a

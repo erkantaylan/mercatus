@@ -1007,3 +1007,27 @@ Decisions taken while putting the dedicated instance on Logto ahead of any regis
   The suite asks the store API its questions with the token the MERCHANT'S BROWSER was handed,
   because `/dev/login/staff` does not exist under `oidc` and a helper that needed it could only
   ever describe the stub.
+
+## The v2.0.0 handover (docs only)
+
+- **The acceptance run's nine findings got stable labels, `FJ`–`FR`.** They arrived with severity
+  numbers, which are ordered by that review and mean nothing in the next one, and this repo points
+  at defects by two-letter label across five files. `FE` and `FI` were the highest already in use.
+  `FJ` is the worst of them and is the same defect as `EV`.
+- **`EV` was corrected in place rather than superseded.** `docs/OPEN-DEFECTS.md` said the cost was
+  "B's instance token answers 401 for ever. Restarting B fixes it in one poll." The acceptance run
+  measured both halves as understated — sign-in dies at every running box under `oidc`
+  (`oidc.invalid_client`, because the per-installation client went with Logto's ephemeral
+  Postgres), the console reads zero installations while boxes are selling, and restarting the box
+  recreates its database (4 orders → 0). A defect table that undersells its own worst entry is
+  worse than no table, so the row now carries the measurement and the file points at
+  `docs/V2.md` §4 for the rest.
+- **`aspire/scripts/run-dedicated.sh` is now the README's documented way to start a dedicated
+  box**, with the bare `cd aspire/AppHostB && aspire run` demoted to "fine for exactly one". The
+  README opened with the bare form while everything below it — the four-tenant demo, the e2e
+  suite's default `MERCATUS_E2E_DEDICATED=zenith,orion` — assumes two, and the bare form's
+  dashboard port (`15240`) is the one thing the script deliberately randomises.
+- **`docs/V2.md` states what was re-verified in the handover and what was inherited.** The live
+  numbers in it are the acceptance reviewer's and the repair round's; the handover started no
+  stack. Saying which is which is cheaper than re-running a four-tenant topology to re-measure
+  numbers nobody disputed, and honest in a way that "verified" alone is not.

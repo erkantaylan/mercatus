@@ -85,10 +85,12 @@ instance, `.stack/apphost-<slug>.json` on every run -- which is what the e2e sui
 of reading a table. Since **v2.0.0 phase 2** there is one AppHost B for any tenant
 (`MERCATUS_TENANT_SLUG`), so the file is named after the tenant rather than after the AppHost.
 
-The two Aspire dashboards stay on `15230` (A) and `15240` (B), set in each `apphost.run.json`.
-A SECOND AppHost B at the same time takes `aspire run --isolated`, which randomises those three
-CLI ports; nothing else collides, because every resource port, container name and path below is
-keyed by the slug.
+A's Aspire dashboard stays on `15230`, set in `aspire/AppHostA/apphost.run.json`. **A dedicated
+box's is randomised**: `aspire/scripts/run-dedicated.sh` — the documented way to start one, and
+the only way to start two — always passes `--isolated`, which randomises the three CLI ports in
+`apphost.run.json` (`15240`, `19081`, `20015`). The address it landed on is in the JSON the
+detached run prints. Only a bare `aspire run` from `aspire/AppHostB` keeps `15240`. Nothing else
+collides, because every resource port, container name and path below is keyed by the slug.
 
 ---
 
