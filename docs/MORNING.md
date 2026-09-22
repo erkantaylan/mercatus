@@ -184,8 +184,9 @@ packages/identity/scripts/shopper-sso-across-planes.sh <pooled> <dedicated> <log
 |---|---|
 | `pnpm -r test` | **261 passed, 0 skipped**, exit 0. core 26, contracts 25, db-platform 11, fake-bank 17, platform 39, db-store 98, store 45 |
 | `pnpm turbo run typecheck lint` | 26 tasks, 26 successful |
-| `pnpm test:e2e` (stub) | **22 passed in 1.6 min**, real Chrome, headless, against two pooled and two dedicated tenants live |
-| `pnpm test:e2e` (oidc) | the four-tenant demo in a browser on a real issuer: one account, four shops, three origins, four dashboards |
+| `pnpm test:e2e` (stub) | **22 passed, 6 skipped, 1.6 min**, real Chrome, headless, against two pooled and two dedicated tenants live |
+| `MERCATUS_E2E_REQUIRE_OIDC=1 pnpm test:e2e` | **6 passed, 22 skipped, 50.7 s** — the four-tenant demo in a browser on Logto: one account signing in once, four shops, three origins, four dashboards |
+| Every instance reports **`version: "2.0.0"`** | observed live in `GET /installations` for both zenith and orion |
 | AppHost A | up in ~15 s; six edge hostnames 200; Logto `/api/status` 204 |
 | Two dedicated boxes | one command each, ~10 s each, registered with the control plane at Aspire-assigned ports and hostnames of their own |
 | Host pinning | a `baseUrl` on another host is refused with a generic 401 and does NOT burn the bootstrap token; the same token then registers on the pinned host |
