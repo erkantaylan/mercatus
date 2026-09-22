@@ -176,6 +176,8 @@ against a Postgres: `pnpm --filter @mercatus/store test` → **33/33**.
 ## Machine state
 
 Left as found. `aspire stop` run on both AppHosts; the hand-restarted `store-zenith` process was
-killed. `docker ps` shows only `mercatus-dash-gate-pg` (task 07b's leftover on 55432, reused here
+killed. `.instance/zenith.json` was **deleted**: it held a credential for a control-plane database
+that no longer exists, so leaving it would make the next `aspire run` of B skip registration and
+poll with a token the platform has never seen. With it gone, B provisions itself cleanly again. `docker ps` shows only `mercatus-dash-gate-pg` (task 07b's leftover on 55432, reused here
 for the store test run) and `chess-trainer`, both pre-existing. Ports 3001, 3002, 4001–4004, 5173,
 5174, 5175, 8080, 15230 and 15240 are free.
