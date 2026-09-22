@@ -96,45 +96,59 @@ export const DEDICATED: Readonly<Record<string, DedicatedEndpoints>> = Object.fr
       m.tenant,
       {
         slug: m.tenant,
+        // Taken exactly as published. AppHost B publishes `<slug>.localtest.me:<port>` for all
+        // three surfaces, because cookies are scoped by host and IGNORE THE PORT -- three boxes
+        // on `localhost` are one cookie jar, and the second sign-in destroys the first one's
+        // session (lessons/17). This helper used to rewrite the hostname on the way in; since the
+        // browser-facing addresses are also REGISTERED REDIRECT URIs, a rewrite here would send
+        // the shopper somewhere the issuer was never told about. The AppHost publishes the truth.
         store: m.endpoints['store'] ?? '',
-        storefront: ownHostname(m.tenant, m.endpoints['storefront'] ?? ''),
+        storefront: m.endpoints['storefront'] ?? '',
         dashboard: m.endpoints['dashboard'] ?? '',
       },
     ]),
 );
 
-/**
- * A storefront is driven at a HOSTNAME of its own, never at `localhost:<port>`.
- *
- * Cookies are scoped by host and **ignore the port**, so three storefronts on `localhost` are one
- * cookie jar: signing the shopper in at the second one overwrites the first one's session cookie,
- * and since v2.0.0 phase 2 gave every box its own `AUTH_STUB_SECRET` (CE1, correctly), the token
- * left behind is one the other store refuses -- `UNAUTHENTICATED` on a page that still says who
- * is signed in, because the readable phone cookie is somebody else's too. Measured on the second
- * dedicated tenant: orion's checkout button did nothing, with zenith's token in the jar.
- *
- * `<slug>.localtest.me` resolves to loopback with no `/etc/hosts` entry -- the same trick the edge
- * already uses -- so this is the address a real deployment would have given the box anyway, and
- * one browser context can hold four shops at once. The store API and the dashboard are left as
- * published: the dashboard keeps its session in `localStorage`, which IS scoped by origin, port
- * and all.
- */
-function ownHostname(slug: string, published: string): string {
-  if (published === '') return '';
-  try {
-    const url = new URL(published);
-    if (url.hostname === 'localhost' || url.hostname === '127.0.0.1') {
-      url.hostname = `${slug}.localtest.me`;
-    }
-    return url.origin;
-  } catch {
-    return published;
-  }
-}
-
 /** The instance serving this tenant, or null when it is not running. */
 export function dedicated(slug: string): DedicatedEndpoints | null {
   return DEDICATED[slug] ?? null;
+}
+
+/**
+ * WHICH DEDICATED INSTANCES THIS RUN IS CLAIMING TO PROVE. Two, unless you say otherwise.
+ *
+ * This exists because a skip is not a pass and the suite used to treat it as one: every test in
+ * `04-two-dedicated-tenants.spec.ts` began `test.skip(!bothUp, ...)`, so the everyday loop -- one
+ * AppHost B, zenith only -- reported green having proved nothing at all about two dedicated
+ * tenants, one shopper across four stores, four isolated dashboards or both boxes surviving an
+ * outage. The headline check could not fail. That is the same hole BL1 names one level down.
+ *
+ * So the expectation is now DECLARED and checked in global setup: an instance named here that is
+ * not answering fails the run, with the command that starts it. Narrowing it is an explicit act
+ * that appears in the shell history and in the suite's own output:
+ *
+ *   MERCATUS_E2E_DEDICATED=zenith pnpm test:e2e     # the one-box loop, and 04 says it skipped why
+ *   MERCATUS_E2E_DEDICATED= pnpm test:e2e           # pooled only; 03 and 04 both skip, loudly
+ */
+export const EXPECTED_DEDICATED: readonly string[] = (
+  process.env['MERCATUS_E2E_DEDICATED'] ?? 'zenith,orion'
+)
+  .split(',')
+  .map((slug) => slug.trim())
+  .filter((slug) => slug !== '');
+
+/** True when this run promised that instance. A promise not kept is a failure, never a skip. */
+export function expectsDedicated(slug: string): boolean {
+  return EXPECTED_DEDICATED.includes(slug);
+}
+
+/** The sentence a spec prints when it skips, so a skip always names the choice that caused it. */
+export function notExpectedReason(slugs: readonly string[]): string {
+  return (
+    `MERCATUS_E2E_DEDICATED=${EXPECTED_DEDICATED.join(',') || '(empty)'} does not include ` +
+    `${slugs.join(' and ')}, so this run is not claiming that. ` +
+    'Drop the variable to demand every dedicated instance the acceptance list names.'
+  );
 }
 
 /**

@@ -5,7 +5,7 @@
  * naming the `aspire run` that was not issued. AppHost B is OPTIONAL -- its spec skips itself when
  * the dedicated instance is not there -- so B's absence is reported and not fatal.
  */
-import { DEDICATED, ENDPOINTS, probe } from './stack.js';
+import { DEDICATED, ENDPOINTS, EXPECTED_DEDICATED, probe } from './stack.js';
 
 interface Requirement {
   readonly name: string;
@@ -24,13 +24,28 @@ const REQUIRED: readonly Requirement[] = [
 ];
 
 /**
- * Whatever dedicated instances published an address book this run, named after their own tenant.
+ * The dedicated instances this run PROMISED, and the three surfaces each of them owes.
  *
- * Nothing here is a list of tenants we expect. One AppHost B serves any tenant by
- * MERCATUS_TENANT_SLUG, so the question "is the dedicated instance up" became "which ones are",
- * and the answer is read off `.stack/` rather than written down (v2.0.0 phase 2).
+ * `MERCATUS_E2E_DEDICATED` defaults to `zenith,orion` -- the topology the acceptance list asks
+ * for. An instance named there that is not answering fails the whole run here, before a browser
+ * opens, with the command that starts it. It used to be optional on both ends: the suite probed
+ * whatever happened to be running and every phase-3 test skipped itself when something was not,
+ * so the one-box loop reported green having proved nothing about two dedicated tenants.
  */
-const OPTIONAL: readonly Requirement[] = Object.values(DEDICATED).flatMap((instance) => [
+const EXPECTED: readonly Requirement[] = EXPECTED_DEDICATED.flatMap((slug) => {
+  const instance = DEDICATED[slug];
+  const base = instance ?? { slug, store: '', storefront: '', dashboard: '' };
+  return [
+    { name: `api-store-tenant-${slug}`, url: base.store, path: '/health' },
+    { name: `web-storefront-tenant-${slug}`, url: base.storefront, path: `/t/${slug}` },
+    { name: `web-dashboard-tenant-${slug}`, url: base.dashboard, path: '/' },
+  ];
+});
+
+/** Anything else that happens to be up. Reported, never required. */
+const OPTIONAL: readonly Requirement[] = Object.values(DEDICATED)
+  .filter((instance) => !EXPECTED_DEDICATED.includes(instance.slug))
+  .flatMap((instance) => [
   { name: `api-store-tenant-${instance.slug}`, url: instance.store, path: '/health' },
   {
     name: `web-storefront-tenant-${instance.slug}`,
@@ -95,22 +110,41 @@ export default async function globalSetup(): Promise<void> {
     );
   }
 
-  // An address no instance published is that instance being down, not a probe worth making.
-  const optional = await Promise.all(OPTIONAL.map((r) => (r.url === '' ? { ok: false, status: null } : probe(r.url, r.path))));
-  const down = OPTIONAL.filter((_, index) => !optional[index]?.ok).map((r) => r.name);
-  const slugs = Object.keys(DEDICATED);
-  if (slugs.length === 0) {
-    process.stdout.write(
-      '\nAppHost A is up. No dedicated instance published an address book ' +
-        '(.stack/apphost-<slug>.json) -- the dedicated specs will skip.\n\n',
-    );
-  } else {
-    process.stdout.write(
-      down.length === 0
-        ? `\nAppHost A is up, and so is every dedicated instance (${slugs.join(', ')}). ` +
-            'The dedicated-instance specs will run.\n\n'
-        : `\nAppHost A is up. Dedicated instances found: ${slugs.join(', ')}, but not answering: ` +
-            `${down.join(', ')} -- those specs will skip.\n\n`,
+  // The promised instances. An address no instance published is that instance being DOWN, and
+  // this run said it would be up -- so it is a failure here rather than six quiet skips later.
+  const expected = await Promise.all(
+    EXPECTED.map((r) => (r.url === '' ? Promise.resolve({ ok: false, status: null }) : probe(r.url, r.path))),
+  );
+  const absent = EXPECTED.flatMap((requirement, index) =>
+    expected[index]?.ok === true
+      ? []
+      : [`${requirement.name} (${requirement.url === '' ? 'no address published' : requirement.url + requirement.path})`],
+  );
+  if (absent.length > 0) {
+    throw new Error(
+      [
+        `This run expects the dedicated instances: ${EXPECTED_DEDICATED.join(', ')}.`,
+        'Not answering:',
+        ...absent.map((line) => `  - ${line}`),
+        '',
+        'Start each one with:',
+        ...EXPECTED_DEDICATED.map((slug) => `  aspire/scripts/run-dedicated.sh ${slug}`),
+        '',
+        'Or say what this run is actually claiming, which then appears in the suite output:',
+        '  MERCATUS_E2E_DEDICATED=zenith pnpm test:e2e',
+      ].join('\n'),
     );
   }
+
+  const extra = await Promise.all(
+    OPTIONAL.map((r) => (r.url === '' ? Promise.resolve({ ok: false, status: null }) : probe(r.url, r.path))),
+  );
+  const alsoUp = OPTIONAL.filter((_, index) => extra[index]?.ok).map((r) => r.name);
+
+  process.stdout.write(
+    `\nAppHost A is up, and so is every dedicated instance this run claims ` +
+      `(${EXPECTED_DEDICATED.join(', ') || 'none'}).` +
+      (alsoUp.length === 0 ? '' : ` Also running, unclaimed: ${alsoUp.join(', ')}.`) +
+      '\n\n',
+  );
 }

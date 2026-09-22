@@ -32,6 +32,14 @@ export interface Shopper {
 }
 
 /**
+ * The dev passwords the identity bootstrap seeds (`IDENTITY_DEV_PASSWORD`, default below). They
+ * are only ever used when the stack is on `AUTH_ADAPTER=oidc`; the stub's sign-in page asks for
+ * no password at all, which is exactly what it is for.
+ */
+const SHOPPER_PASSWORD = process.env['MERCATUS_E2E_PASSWORD'] ?? 'Mercatus-dev-1';
+const STAFF_PASSWORD = SHOPPER_PASSWORD;
+
+/**
  * A shopper who has never shopped here before, minted per run.
  *
  * "This shopper has 1 order at this store" is an assertion about a PERSON, not about the
@@ -63,12 +71,47 @@ async function sessionPhone(page: Page, storefront: string): Promise<string | nu
 }
 
 /**
+ * The issuer's sign-in page, whichever one this stack is running (v2.0.0 repair round 1).
+ *
+ * The browser leaves the storefront for the STORE's `/auth/login`, which 302s on to whatever
+ * `AUTH_ADAPTER` names: the store's own `/dev/login` page under `stub`, Logto under `oidc`. That
+ * is the whole point of the repair -- one path, both adapters -- so the helper handles both and
+ * the suite is adapter-agnostic too.
+ *
+ * The stub's page is server-rendered HTML with no script, so there is nothing to hydrate and
+ * nothing to race; Logto's is a React app, which is why the fill and the submit are wrapped the
+ * way every other form in this suite is (lessons/07a, /11).
+ */
+async function signInAtIssuer(page: Page, identity: string, secret: string): Promise<void> {
+  const stub = page.locator('form[data-dev-login]');
+  if ((await stub.count()) > 0) {
+    await page.locator('#subject').fill(identity);
+    await page.getByRole('button', { name: 'Sign in' }).click();
+    return;
+  }
+  // Logto's hosted experience. Username + password, then whatever consent it asks for the first
+  // time a user meets a client (consent is per user+application and is remembered; lessons/14).
+  await page.getByLabel(/username|email|phone/i).first().fill(identity);
+  await page.locator('input[type="password"]').first().fill(secret);
+  await page.getByRole('button', { name: /sign in|continue/i }).first().click();
+  const consent = page.getByRole('button', { name: /authorize|agree|continue/i });
+  if (await consent.first().isVisible({ timeout: 3000 }).catch(() => false)) {
+    await consent.first().click();
+  }
+}
+
+/**
  * Sign in at a storefront. One account for every store that storefront serves (Q20) -- which is
  * why this takes the storefront's origin and no slug at all.
  *
- * The whole attempt is inside `toPass`, reload included. A form that has not hydrated takes the
- * keystrokes and drops the submit, and there is nothing on the page that says so -- so the effect
- * being waited for is the SESSION COOKIE existing, not anything the DOM claims.
+ * It is a REAL ROUND TRIP now: storefront -> store `/auth/login` -> issuer -> storefront
+ * `/api/auth/callback`. Before v2.0.0's repair the storefront posted a phone number at
+ * `/dev/login/shopper`, a route that only exists while `AUTH_ADAPTER=stub` -- so this helper
+ * could only ever drive the stub, and switching the real issuer on broke sign-in outright.
+ *
+ * The whole attempt is inside `toPass`, navigation included. A form that has not hydrated takes
+ * the keystrokes and drops the submit, and there is nothing on the page that says so -- so the
+ * effect being waited for is the SESSION COOKIE existing, not anything the DOM claims.
  */
 export async function signIn(page: Page, storefront: string, shopper: Shopper): Promise<void> {
   // This host's jar first. The condition below is "the phone cookie says our shopper", and a
@@ -79,10 +122,9 @@ export async function signIn(page: Page, storefront: string, shopper: Shopper): 
   await page.context().clearCookies({ domain: new URL(storefront).hostname });
   await expect(async () => {
     await page.goto(`${storefront}/signin`, { waitUntil: 'domcontentloaded' });
-    await page.getByLabel('Phone').fill(shopper.phone);
-    await page.getByLabel('Name').fill(shopper.name);
-    await page.getByRole('button', { name: 'Sign in' }).click();
-    await expect.poll(() => sessionPhone(page, storefront), { timeout: 5000 }).toBe(shopper.phone);
+    await page.locator('[data-signin-start]').click();
+    await signInAtIssuer(page, shopper.phone, SHOPPER_PASSWORD);
+    await expect.poll(() => sessionPhone(page, storefront), { timeout: 8000 }).toBe(shopper.phone);
   }).toPass({ timeout: 60_000 });
 
   // Signing in navigates away, so come back: the page now says who is signed in, which is the
@@ -157,14 +199,21 @@ export async function checkout(
   return { orderId, number, payment };
 }
 
-/** Sign in at the merchant dashboard: slug plus role, which is all the stub adapter asks for. */
+/**
+ * Sign in at the merchant dashboard.
+ *
+ * The slug is not a credential -- it selects the ORGANIZATION the login is for, so the issuer can
+ * mint a token scoped to one tenant and no other (BC1, CD3). Everything after the button is the
+ * same round trip the shopper takes, ending at the dashboard's own registered `/callback`.
+ */
 export async function signInToDashboard(page: Page, dashboard: string, slug: string): Promise<void> {
-  await page.goto(`${dashboard}/login`, { waitUntil: 'domcontentloaded' });
   await expect(async () => {
+    await page.goto(`${dashboard}/login`, { waitUntil: 'domcontentloaded' });
     await page.locator('#slug').fill(slug);
     await page.getByRole('button', { name: /Sign in/ }).click();
-    await expect(page.locator('.mc-brand small')).toHaveText(slug, { timeout: 4000 });
-  }).toPass({ timeout: 45_000 });
+    await signInAtIssuer(page, `${slug}_owner`, STAFF_PASSWORD);
+    await expect(page.locator('.mc-brand small')).toHaveText(slug, { timeout: 8000 });
+  }).toPass({ timeout: 60_000 });
 }
 
 /** Sign the merchant out, so the next sign-in starts from a clean session and an empty cache. */

@@ -28,13 +28,33 @@
 # Usage:
 #   aspire/scripts/run-dedicated.sh <slug> [bootstrap-token]
 #
-# The bootstrap token may also come from MERCATUS_BOOTSTRAP_TOKEN. Without either, apphost.cs
-# falls back to the development literal seeded for that slug, which is what the everyday zenith
-# loop uses. Mint a real one with:
+# TWO SLUGS NEED NOTHING ELSE. `zenith` and `orion` are seeded into the control plane's database
+# by packages/db-platform/src/seed-dedicated.ts -- tenant, licence and an UNSPENT, host-pinned
+# installation each -- and apphost.cs falls back to the development literal for the slug it was
+# given (`mercatus-dev-bootstrap-token-for-<slug>-001`). So both of these are genuinely one
+# command, with zero edits to AppHost A and zero curls:
 #
-#   curl -sX POST $PLATFORM/installations -H "authorization: Bearer $OPERATOR_TOKEN" \
+#   aspire/scripts/run-dedicated.sh zenith
+#   aspire/scripts/run-dedicated.sh orion
+#
+# ANY OTHER SLUG IS FOUR AUTHENTICATED CALLS FIRST, and that is the product's real path -- the two
+# above are the dev loop, seeded so that a rebuilt control plane does not cost an operator a
+# re-run of them. `expectedHost` is the instance's OWN hostname: AppHost B publishes every
+# browser-facing address as `<slug>.localtest.me:<aspire-assigned port>` (one cookie jar per box),
+# and the pin is a string compare against that. The port is never pinned.
+#
+#   PLATFORM=http://platform.localtest.me:28080
+#   TOKEN=$(curl -sX POST $PLATFORM/dev/login/operator -H 'content-type: application/json' \
+#           -d '{"subject":"ops"}' | jq -r .accessToken)          # accessToken, NOT token
+#   curl -sX POST $PLATFORM/tenants -H "authorization: Bearer $TOKEN" \
 #        -H 'content-type: application/json' \
-#        -d '{"tenantSlug":"<slug>","expectedHost":"localhost"}'
+#        -d '{"slug":"vega","name":"Vega Works","tier":"dedicated"}'
+#   curl -sX POST $PLATFORM/tenants/vega/activate -H "authorization: Bearer $TOKEN" \
+#        -H 'content-type: application/json' -d '{}'
+#   BOOTSTRAP=$(curl -sX POST $PLATFORM/installations -H "authorization: Bearer $TOKEN" \
+#        -H 'content-type: application/json' \
+#        -d '{"tenantSlug":"vega","expectedHost":"vega.localtest.me"}' | jq -r .bootstrapToken)
+#   aspire/scripts/run-dedicated.sh vega "$BOOTSTRAP"
 #
 # Stop it with aspire/scripts/stop-dedicated.sh <slug>.
 set -euo pipefail

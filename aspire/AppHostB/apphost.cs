@@ -117,6 +117,28 @@ if (!System.Text.RegularExpressions.Regex.IsMatch(TenantSlug, "^[a-z][a-z0-9-]{1
         "name and a file path, so it is checked here rather than trusted.");
 }
 
+// ---------------------------------------------------------------------------------------------
+// AND THE HOSTNAME IT ANSWERS ON. A dedicated instance is a box of its own, so it gets an address
+// of its own: `<slug>.localtest.me`, which resolves to loopback with no /etc/hosts entry.
+//
+// This is not decoration, it is the cookie jar. Cookies are scoped by host and IGNORE THE PORT,
+// so every storefront published as `localhost:<port>` shares one jar: signing the shopper in at
+// the second shop overwrites the first shop's session, and since every box has its own session
+// key (CE1, correctly) the token left behind is one the other store refuses. The symptom is a
+// checkout that answers UNAUTHENTICATED on a page still naming the shopper (lessons/17). The e2e
+// suite used to paper over this by rewriting the hostname on its way into the browser; since
+// v2.0.0 the browser-facing addresses are registered as redirect URIs, so the rewrite would send
+// the shopper to an address the issuer was never told about. Publishing the real hostname fixes
+// both at once.
+//
+// The port is still Aspire-assigned -- only the host is ours. A ParameterResource carries the
+// literal, because a ReferenceExpression hole only accepts an IValueProvider (lessons/05).
+// ---------------------------------------------------------------------------------------------
+var publicHost = builder.AddParameter("public-host", $"{TenantSlug}.localtest.me");
+
+ReferenceExpression PublicUrl(EndpointReference endpoint) =>
+    ReferenceExpression.Create($"http://{publicHost.Resource}:{endpoint.Property(EndpointProperty.Port)}");
+
 // NOT A's, and now not a literal either: per-instance by construction (CE1). A second dedicated
 // tenant on this machine mints its own stub key and its own session key, and neither box can read
 // the other's cookies.
@@ -262,11 +284,17 @@ var store = Node($"api-store-tenant-{TenantSlug}", "store", null,
 // Ships with the instance (DK): the same Next.js app as the pooled storefront, with TENANT_SLUG
 // set. That one variable is the whole of "dedicated mode" here -- the root path becomes this one
 // store instead of an index of stores.
+// Two addresses for the same socket, and the difference matters.
+//
+//   storeUrl        what Aspire assigned: `localhost:<port>`. Internal wiring only.
+//   storePublicUrl  where a BROWSER is sent: `<slug>.localtest.me:<same port>`. It is what gets
+//                   registered as a redirect URI and what the control plane pins the host on.
 var storeUrl = store.GetEndpoint("http");
+var storePublicUrl = PublicUrl(store.GetEndpoint("http"));
 
 // Self-reference, no WaitFor: the store builds absolute URLs out of its own address and cannot
 // wait on an endpoint it owns.
-store.WithEnvironment("STORE_PUBLIC_URL", storeUrl);
+store.WithEnvironment("STORE_PUBLIC_URL", storePublicUrl);
 
 var storefront = Node($"web-storefront-tenant-{TenantSlug}", "storefront", null,
         "node_modules/next/dist/bin/next", "dev")
@@ -285,13 +313,17 @@ var storefront = Node($"web-storefront-tenant-{TenantSlug}", "storefront", null,
 // The merchant's own dashboard, on their own server (DK). It is the same build as the pooled
 // one with a different VITE_STORE_API_URL, and it is why "the control plane is down" does not
 // mean "the merchant cannot see their orders".
+// 0.0.0.0, not 127.0.0.1: this is reached at `<slug>.localtest.me`, whose only A record is
+// loopback but whose AAAA record is `::1` -- a browser tries the v6 address first and falls back,
+// and a server bound to one interface makes that fallback the difference between working and not.
 var dashboard = Node($"web-dashboard-tenant-{TenantSlug}", "dashboard", null,
-        "node_modules/vite/bin/vite.js", "--host", "127.0.0.1")
+        "node_modules/vite/bin/vite.js", "--host", "0.0.0.0")
     .WithEnvironment("VITE_STORE_API_URL", storeUrl)
     .WithHttpHealthCheck("/")
     .WaitFor(store);
 
-var storefrontUrl = storefront.GetEndpoint("http");
+var storefrontUrl = PublicUrl(storefront.GetEndpoint("http"));
+var dashboardUrl = PublicUrl(dashboard.GetEndpoint("http"));
 storefront.WithEnvironment("STOREFRONT_PUBLIC_URL", storefrontUrl);
 
 // ---------------------------------------------------------------------------------------------
@@ -309,16 +341,16 @@ storefront.WithEnvironment("STOREFRONT_PUBLIC_URL", storefrontUrl);
 // No WaitFor is created by any of these: the store waits for this task, not the other way round.
 // ---------------------------------------------------------------------------------------------
 provision
-    .WithEnvironment("STORE_PUBLIC_URL", storeUrl)
+    .WithEnvironment("STORE_PUBLIC_URL", storePublicUrl)
     .WithEnvironment("STOREFRONT_PUBLIC_URL", storefrontUrl)
-    .WithEnvironment("DASHBOARD_PUBLIC_URL", dashboard.GetEndpoint("http"));
+    .WithEnvironment("DASHBOARD_PUBLIC_URL", dashboardUrl);
 
 // And the STORE gets the same two, because the store is the only OIDC client on this box: it is
 // the one process holding a client secret, so `/auth/login?via=storefront|dashboard` builds its
 // redirect_uri from these. Same variables, same strings, same spelling as what was registered.
 store
     .WithEnvironment("STOREFRONT_PUBLIC_URL", storefrontUrl)
-    .WithEnvironment("DASHBOARD_PUBLIC_URL", dashboard.GetEndpoint("http"));
+    .WithEnvironment("DASHBOARD_PUBLIC_URL", dashboardUrl);
 
 // ---------------------------------------------------------------------------------------------
 // This box's half of the address book (see AppHostA for the other).
@@ -339,8 +371,10 @@ store
 builder.AddExecutable("task-stack-manifest", "node", repoRoot, "aspire/scripts/write-stack-manifest.mjs")
     .WithEnvironment("MERCATUS_MANIFEST_OUT", $".stack/apphost-{TenantSlug}.json")
     .WithEnvironment("MERCATUS_MANIFEST_TENANT", TenantSlug)
-    .WithEnvironment("MERCATUS_EP_STORE", storeUrl)
+    // The PUBLIC spelling, in all three: drive a store at the address it publishes or you will
+    // spend an afternoon on a cookie that was set on the other name (lessons/14).
+    .WithEnvironment("MERCATUS_EP_STORE", storePublicUrl)
     .WithEnvironment("MERCATUS_EP_STOREFRONT", storefrontUrl)
-    .WithEnvironment("MERCATUS_EP_DASHBOARD", dashboard.GetEndpoint("http"));
+    .WithEnvironment("MERCATUS_EP_DASHBOARD", dashboardUrl);
 
 builder.Build().Run();

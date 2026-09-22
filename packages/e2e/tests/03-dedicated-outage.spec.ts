@@ -25,7 +25,9 @@ import {
   TENANTS,
   captureProcess,
   dedicated,
+  expectsDedicated,
   licenceView,
+  notExpectedReason,
   pidOnPort,
   probe,
   reachable,
@@ -55,6 +57,13 @@ const SLUG = TENANTS.zenith.slug;
  */
 const ZENITH = dedicated(SLUG) ?? { slug: SLUG, store: '', storefront: '', dashboard: '' };
 
+/**
+ * The skip reason, when there is one -- and there is one only if this run SAID it was not
+ * claiming zenith (`MERCATUS_E2E_DEDICATED`). Otherwise global setup has already refused to start
+ * without it, so nothing below may quietly pass by not running.
+ */
+const notClaimed = expectsDedicated(SLUG) ? '' : notExpectedReason([SLUG]);
+
 let context: BrowserContext | undefined;
 let page: Page;
 let dedicatedUp = false;
@@ -69,6 +78,12 @@ test.describe('the dedicated instance keeps selling with the control plane down'
       ZENITH.store !== '' &&
       (await reachable(ZENITH.store)) &&
       (await reachable(ZENITH.storefront, `/t/${SLUG}`));
+    if (!dedicatedUp && notClaimed === '') {
+      throw new Error(
+        `This run claims ${SLUG}, and global setup found it -- but it stopped answering before ` +
+          'the first test. That is a real failure, not a reason to skip.',
+      );
+    }
     if (dedicatedUp) ordersBefore = await staffOrderCount(ZENITH.store, SLUG);
     context = await browser.newContext();
     page = await context.newPage();
@@ -86,7 +101,7 @@ test.describe('the dedicated instance keeps selling with the control plane down'
   });
 
   test('the same shopper signs in at the dedicated store', async () => {
-    test.skip(!dedicatedUp, `no dedicated instance is serving ${SLUG}`);
+    test.skip(!dedicatedUp, notClaimed);
 
     // A different origin on a different server, so the session is that store's to issue -- which
     // is exactly what lets it verify the shopper offline for the rest of the outage (Q20).
@@ -101,7 +116,7 @@ test.describe('the dedicated instance keeps selling with the control plane down'
   });
 
   test('buys from the dedicated store, control plane up', async () => {
-    test.skip(!dedicatedUp, `no dedicated instance is serving ${SLUG}`);
+    test.skip(!dedicatedUp, notClaimed);
 
     const title = await sellableProduct(ZENITH.store, SLUG);
     await addToBasket(page, ZENITH.storefront, SLUG, title);
@@ -114,7 +129,7 @@ test.describe('the dedicated instance keeps selling with the control plane down'
   });
 
   test('the control plane is stopped', async () => {
-    test.skip(!dedicatedUp, `no dedicated instance is serving ${SLUG}`);
+    test.skip(!dedicatedUp, notClaimed);
 
     const pid = pidOnPort(PLATFORM_PORT);
     expect(pid, 'no process is listening on the platform port').not.toBeNull();
@@ -138,7 +153,7 @@ test.describe('the dedicated instance keeps selling with the control plane down'
   });
 
   test('the dedicated store still completes a checkout', async () => {
-    test.skip(!dedicatedUp, `no dedicated instance is serving ${SLUG}`);
+    test.skip(!dedicatedUp, notClaimed);
     expect(await reachable(ENDPOINTS.platform)).toBe(false);
 
     const title = await sellableProduct(ZENITH.store, SLUG);
@@ -164,7 +179,7 @@ test.describe('the dedicated instance keeps selling with the control plane down'
   });
 
   test('and catches up when the control plane comes back', async () => {
-    test.skip(!dedicatedUp, `no dedicated instance is serving ${SLUG}`);
+    test.skip(!dedicatedUp, notClaimed);
     expect(captured, 'the control plane was never captured').not.toBeNull();
 
     const pid = relaunch(captured as CapturedProcess);

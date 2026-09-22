@@ -13,4 +13,5 @@ export * from './repositories/licences.js';
 export * from './repositories/installations.js';
 export * from './repositories/payments.js';
 export { SEED_TENANT_IDS, SEED_USER, seed } from './seed.js';
-export { SEED_DEDICATED, seedDedicated } from './seed-dedicated.js';
+export { SEED_DEDICATED, SEED_DEDICATED_TENANTS, seedDedicated } from './seed-dedicated.js';
+export type { SeedDedicatedTenant } from './seed-dedicated.js';

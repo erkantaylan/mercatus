@@ -7,8 +7,13 @@
  *
  *   POST /tenants            {slug: 'orion', name: 'Orion Instruments', tier: 'dedicated'}
  *   POST /tenants/orion/activate
- *   POST /installations      {tenantSlug: 'orion', expectedHost: 'localhost'}   -> bootstrapToken
+ *   POST /installations      {tenantSlug: 'orion', expectedHost: 'orion.localtest.me'}
  *   aspire/scripts/run-dedicated.sh orion <bootstrapToken>
+ *
+ * (The dev loop seeds orion's tenant and an unspent, host-pinned installation for it, so
+ * `aspire/scripts/run-dedicated.sh orion` alone starts it and a rebuilt control plane does not
+ * cost an operator those four calls again. The four calls are still what a THIRD tenant costs,
+ * and the full recipe is in `aspire/scripts/run-dedicated.sh`'s header and the README.)
  *
  * -- and everything else followed from the registration handshake: its Aspire-assigned addresses,
  * its own OIDC client, its own organization at the issuer (created by the control plane, because
@@ -22,8 +27,12 @@
  *   4. four merchants who can each see only their own orders
  *   5. the control plane stopped -- and BOTH dedicated stores still completing a checkout
  *
- * Skipped, not failed, unless both dedicated instances are up: one AppHost B is the everyday
- * loop, two is the phase-3 demo. `.stack/apphost-<slug>.json` is how each one says it is here.
+ * THIS FILE CAN FAIL. Every test in it used to begin `test.skip(!bothUp, ...)`, so the everyday
+ * loop -- one AppHost B, zenith only -- reported the whole file green having proved none of the
+ * five claims above. A headline check that cannot fail is the hole BL1 names, one level up. Now
+ * the run DECLARES which dedicated instances it is claiming (`MERCATUS_E2E_DEDICATED`, default
+ * `zenith,orion`): a claimed instance that is not answering fails global setup, and the only way
+ * to reach a skip here is to have said so on the command line, which the skip reason quotes back.
  *
  * ONE browser context for the file, because "one shopper account" is the claim and a fresh
  * context per test would be a fresh cookie jar and a different person.
@@ -48,7 +57,9 @@ import {
   TENANTS,
   captureProcess,
   dedicated,
+  expectsDedicated,
   licenceView,
+  notExpectedReason,
   pidOnPort,
   probe,
   reachable,
@@ -81,7 +92,13 @@ const before: Record<string, number> = {};
 
 let context: BrowserContext | undefined;
 let page: Page;
+/** Did this run promise both boxes? Set once, in beforeAll, from what was actually reachable. */
 let bothUp = false;
+/** The skip reason when this run deliberately did not claim them. Empty when it did. */
+const notClaimed =
+  expectsDedicated(TENANTS.zenith.slug) && expectsDedicated(ORION)
+    ? ''
+    : notExpectedReason([TENANTS.zenith.slug, ORION]);
 let captured: CapturedProcess | null = null;
 
 test.describe.configure({ mode: 'serial' });
@@ -96,6 +113,14 @@ test.describe('two pooled and TWO dedicated tenants, at once', () => {
       ),
     );
     bothUp = reachableBoxes.every(Boolean);
+    // Global setup already refused to start when a CLAIMED instance was missing, so reaching here
+    // with one down means this run did not claim it. Anything else is a bug worth failing on.
+    if (!bothUp && notClaimed === '') {
+      throw new Error(
+        'This run claims zenith and orion, and global setup found both -- but one of them stopped ' +
+          'answering before the first test. That is a real failure, not a reason to skip.',
+      );
+    }
 
     before[TENANTS.acme.slug] = await staffOrderCount(ENDPOINTS.storePooled, TENANTS.acme.slug);
     before[TENANTS.borg.slug] = await staffOrderCount(ENDPOINTS.storePooled, TENANTS.borg.slug);
@@ -118,7 +143,7 @@ test.describe('two pooled and TWO dedicated tenants, at once', () => {
   });
 
   test('four merchants are serving: two pooled, two dedicated', async () => {
-    test.skip(!bothUp, 'this file needs BOTH dedicated instances (zenith and orion) running');
+    test.skip(!bothUp, notClaimed);
 
     // The pooled pair: one store process, one database, two shops.
     expect((await probe(ENDPOINTS.storefront, `/t/${TENANTS.acme.slug}`)).status).toBe(200);
@@ -149,7 +174,7 @@ test.describe('two pooled and TWO dedicated tenants, at once', () => {
   });
 
   test('one shopper account buys from all four', async () => {
-    test.skip(!bothUp, 'this file needs BOTH dedicated instances (zenith and orion) running');
+    test.skip(!bothUp, notClaimed);
 
     // -- the pooled storefront: one sign-in, two shops --------------------------------------
     await signIn(page, ENDPOINTS.storefront, SHOPPER);
@@ -194,7 +219,7 @@ test.describe('two pooled and TWO dedicated tenants, at once', () => {
   });
 
   test('each merchant sees only its own orders', async () => {
-    test.skip(!bothUp, 'this file needs BOTH dedicated instances (zenith and orion) running');
+    test.skip(!bothUp, notClaimed);
 
     // -- the pooled pair: same process, same database, separated by RLS (BE1) ----------------
     await signInToDashboard(page, ENDPOINTS.dashboard, TENANTS.acme.slug);
@@ -245,7 +270,7 @@ test.describe('two pooled and TWO dedicated tenants, at once', () => {
   });
 
   test('the control plane is stopped, and both dedicated boxes notice by themselves', async () => {
-    test.skip(!bothUp, 'this file needs BOTH dedicated instances (zenith and orion) running');
+    test.skip(!bothUp, notClaimed);
 
     const pid = pidOnPort(PLATFORM_PORT);
     expect(pid, 'no process is listening on the platform port').not.toBeNull();
@@ -266,7 +291,7 @@ test.describe('two pooled and TWO dedicated tenants, at once', () => {
   });
 
   test('BOTH dedicated stores still complete a checkout with the control plane down', async () => {
-    test.skip(!bothUp, 'this file needs BOTH dedicated instances (zenith and orion) running');
+    test.skip(!bothUp, notClaimed);
     expect(await reachable(ENDPOINTS.platform)).toBe(false);
 
     for (const box of BOXES) {
@@ -292,7 +317,7 @@ test.describe('two pooled and TWO dedicated tenants, at once', () => {
   });
 
   test('and both catch up when the control plane comes back', async () => {
-    test.skip(!bothUp, 'this file needs BOTH dedicated instances (zenith and orion) running');
+    test.skip(!bothUp, notClaimed);
     expect(captured, 'the control plane was never captured').not.toBeNull();
 
     relaunch(captured as CapturedProcess);
