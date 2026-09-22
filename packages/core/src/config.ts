@@ -87,6 +87,14 @@ const storeEnvSchema = z
      * itself, dedicated reports, and the two are never one path (CJ1).
      */
     INSTANCE_TOKEN: z.string().min(1).optional(),
+    /**
+     * Where that credential is kept when the instance MINTED it itself rather than being handed
+     * one (architecture.md §7). The install command registers with a one-time bootstrap token,
+     * writes this file 0600 and never needs the bootstrap token again; the store reads it at boot.
+     * A credential that arrives in an environment variable came from somewhere else, which on a
+     * box we do not own is the thing CE1 is about.
+     */
+    INSTANCE_TOKEN_PATH: z.string().min(1).optional(),
     /** The POOLED plane's shared licence-poll credential. Never set on a dedicated instance. */
     PLATFORM_INTERNAL_TOKEN: z.string().min(16).optional(),
 
@@ -148,6 +156,8 @@ export interface StoreConfig {
   readonly baseHost: string;
   readonly platformUrl: string | undefined;
   readonly instanceToken: string | undefined;
+  /** The file the install command wrote the instance credential into, if there is one. */
+  readonly instanceTokenPath: string | undefined;
   readonly internalToken: string | undefined;
   readonly licencePollSeconds: number;
   readonly licenceGraceSeconds: number;
@@ -190,6 +200,7 @@ export function loadStoreConfig(env: EnvSource = process.env): StoreConfig {
     baseHost: value.BASE_HOST,
     platformUrl: value.PLATFORM_URL,
     instanceToken: value.INSTANCE_TOKEN,
+    instanceTokenPath: value.INSTANCE_TOKEN_PATH,
     internalToken: value.PLATFORM_INTERNAL_TOKEN,
     licencePollSeconds: value.LICENCE_POLL_SECONDS,
     licenceGraceSeconds: value.LICENCE_GRACE_SECONDS,

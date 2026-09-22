@@ -11,3 +11,6 @@ coverage/
 
 # Identity cache and bootstrap output -- per-machine, written by packages/identity.
 .identity/
+
+# Per-instance credential written by the install command (apps/store provision).
+.instance/

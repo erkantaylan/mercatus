@@ -178,25 +178,52 @@ control-plane / data-plane trust boundary can be asserted in a test.
 
 ## Running it
 
+**Two AppHosts, two commands.** AppHost A is everything we run; AppHost B is one customer's
+server. `aspire run` is always `--detach`, and each is stopped from its own directory.
+
 ```bash
-cd aspire/AppHost
-aspire run --detach
+# A -- control plane, identity, fake-bank, the pooled store, the edge on 8080
+cd aspire/AppHostA && aspire run --detach --non-interactive --nologo --format Json
+
+# B -- "Zenith's VPS": its own Postgres, the same store image, DEPLOYMENT_MODE=dedicated
+cd aspire/AppHostB && aspire run --detach --non-interactive --nologo --format Json
+
+# and back down, each from its own directory
+cd aspire/AppHostA && aspire stop --non-interactive --nologo
+cd aspire/AppHostB && aspire stop --non-interactive --nologo
 ```
 
-Starts the control plane, a pooled store seeded with two tenants, and the supporting containers.
-The dedicated instance and its database are marked `WithExplicitStart()` — start them from the
-dashboard when you want to demo tier 3, so the everyday loop stays light.
+Each directory holds an `aspire.config.json` naming its own `apphost.cs`, which is how the CLI
+knows which application is meant; from anywhere else, `aspire run --apphost aspire/AppHostB`
+says it explicitly. The two dashboards are on **15230** (A) and **15240** (B), each printing a
+one-time login token on start — B's OTLP and resource-service ports are moved in its
+`apphost.run.json`, or the two collide.
 
-Local hostnames use `*.localtest.me`, which resolves to `127.0.0.1` without touching `/etc/hosts`:
+B needs A running the first time only: it presents a one-time bootstrap token to
+`POST /installations/register`, is given a per-instance credential (`CE1`) which it writes to
+`.instance/zenith.json`, and never needs the bootstrap token again. B's application model
+contains no control-plane database — it reaches A only through `AddExternalService`, over
+`platform.localtest.me:8080` and `bank.localtest.me:8080`. `*.localtest.me` resolves to
+`127.0.0.1` without touching `/etc/hosts`.
 
 | | |
 |---|---|
-| `platform.localtest.me/shop/acme` | tier 1 storefront |
-| `acme.localtest.me` | tier 3 storefront, "their server" |
-| the Aspire dashboard | traces, logs and per-resource start/stop |
+| `127.0.0.1:3001/t/acme`, `/t/borg` | tier 1 storefronts, pooled |
+| `127.0.0.1:3002` | tier 3 storefront — Zenith, on "their server" |
+| `127.0.0.1:5173` · `5175` | merchant dashboard, pooled · dedicated |
+| `127.0.0.1:5174` | platform console |
+| `platform.localtest.me:8080` · `bank.localtest.me:8080` | the control plane through our edge |
 
-To demo degradation: stop `platform` in the Aspire dashboard and keep ordering on
-`acme.localtest.me`.
+AppHost **B** runs its own storefront and dashboard as resources. AppHost **A** does not yet run
+the pooled storefront, dashboard or platform console — tasks 07a–07c left them out of the
+application model, so start those by hand with the environment listed in their diary entries.
+
+**The demo.** With both up, buy something on `127.0.0.1:3002`. Then
+`cd aspire/AppHostA && aspire stop` — the whole control plane, not a resource — and buy again.
+The dedicated store keeps serving and keeps taking orders; only the payment waits, because
+payments are ours and never run on a customer's server (`CE2`). After
+`LICENCE_GRACE_SECONDS` (60 here, 72 hours by default) checkout degrades to **503** and browsing
+stays **200**. Bring A back and it returns to `active/healthy` within one poll.
 
 ---
 

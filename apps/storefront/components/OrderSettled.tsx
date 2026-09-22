@@ -89,6 +89,15 @@ export function OrderSettled({ slug, orderId }: { slug: string; orderId: string 
     );
   }
 
+  if (state.source === 'unreachable') {
+    return (
+      <div className="sf-banner sf-banner-warning" data-payment="unreachable">
+        <strong>Placed, not yet paid.</strong> The payment service could not be reached, so
+        nothing was charged. Your order stands and the shop kept selling.
+      </div>
+    );
+  }
+
   return (
     <div className="sf-banner sf-banner-warning" data-payment="pending">
       <strong>Awaiting the bank.</strong> The order is placed and priced; fake-bank has not

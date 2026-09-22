@@ -19,7 +19,7 @@ import type { CheckoutResult } from '@mercatus/contracts';
 import { z } from 'zod';
 
 import { checkout, StoreApiError } from '@/lib/api';
-import { createPayment } from '@/lib/payments';
+import { createPayment, recordUnreachable } from '@/lib/payments';
 import { mintShopperToken, shopperCookie } from '@/lib/session';
 
 const bodySchema = z.object({
@@ -81,19 +81,33 @@ export async function POST(request: Request): Promise<Response> {
       currency: placed.currency,
     }));
   } catch (error) {
-    // The order exists and is unpaid. That is a real state -- `placed` -- and the shopper is sent
-    // to its confirmation page rather than being told the whole checkout failed.
+    // The order exists and is unpaid. That is a real state -- `placed` -- and on a dedicated
+    // instance it is the DESIGNED one while our control plane is unreachable: payments are ours
+    // and never run on the merchant's server (CE2), so the shop keeps selling and the money is
+    // collected afterwards (CG1). 202 rather than 502: nothing failed that the shopper can fix,
+    // and the checkout is complete as far as this store is concerned.
+    console.warn(
+      `order ${String(placed.number)} placed, payment not started: ${
+        error instanceof Error ? error.message : 'unknown error'
+      }`,
+    );
     const response = Response.json(
       {
-        error: {
-          code: 'CONFLICT',
-          message: `Order ${String(placed.number)} was placed but the bank could not be reached: ${
-            error instanceof Error ? error.message : 'unknown error'
-          }`,
-        },
+        orderId: placed.orderId,
+        number: placed.number,
+        totalMinor: placed.totalMinor,
+        currency: placed.currency,
+        paymentUrl: null,
+        payment: 'unreachable',
       },
-      { status: 502 },
+      { status: 202 },
     );
+    recordUnreachable({
+      orderId: placed.orderId,
+      slug,
+      amountMinor: placed.totalMinor,
+      currency: placed.currency,
+    });
     response.headers.append('set-cookie', serialiseCookie(token));
     return response;
   }

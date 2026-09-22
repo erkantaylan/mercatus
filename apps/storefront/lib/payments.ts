@@ -39,8 +39,12 @@ export interface PaymentRecord {
   readonly amountMinor: number;
   readonly currency: string;
   outcome: PaymentOutcome;
-  /** How the outcome was learnt. `callback` means the signature verified. */
-  source: 'pending' | 'callback' | 'bank';
+  /**
+   * How the outcome was learnt. `callback` means the signature verified; `unreachable` means the
+   * bank could not be asked at all, which on a dedicated instance is what an outage of OURS looks
+   * like from the merchant's server (CE2, CG1).
+   */
+  source: 'pending' | 'callback' | 'bank' | 'unreachable';
 }
 
 interface Ledger {
@@ -139,6 +143,33 @@ export async function createPayment(input: {
 }
 
 /**
+ * The order is placed and the bank could not be reached.
+ *
+ * This is a real state, not an error swallowed: payments belong to the control plane (CE2), and a
+ * dedicated store is designed to keep selling while ours is down (CG1). Recording it means the
+ * confirmation page can say which of the two happened -- declined, or never asked -- instead of
+ * showing a shopper a blank "unknown".
+ */
+export function recordUnreachable(input: {
+  orderId: string;
+  slug: string;
+  amountMinor: number;
+  currency: string;
+}): void {
+  const record: PaymentRecord = {
+    orderId: input.orderId,
+    slug: input.slug,
+    paymentId: '',
+    providerRef: '',
+    amountMinor: input.amountMinor,
+    currency: input.currency,
+    outcome: 'pending',
+    source: 'unreachable',
+  };
+  ledger().byOrder.set(record.orderId, record);
+}
+
+/**
  * The bank's callback. Verified before it is believed -- an unsigned or wrongly-signed callback
  * is refused, which is the `bad-hash` behaviour doing its job.
  */
@@ -185,6 +216,9 @@ export async function paymentState(
   const record = ledger().byOrder.get(orderId);
   if (!record) return null;
   if (record.outcome !== 'pending') return { outcome: record.outcome, source: record.source };
+  // There is nothing at the bank to ask about: the payment was never created, because the bank
+  // was not reachable when the order was placed.
+  if (record.source === 'unreachable') return { outcome: 'pending', source: 'unreachable' };
 
   const { fakeBankUrl } = config();
   try {

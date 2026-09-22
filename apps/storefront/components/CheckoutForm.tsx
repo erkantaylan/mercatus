@@ -113,7 +113,7 @@ export function CheckoutForm({ slug, products }: { slug: string; products: reado
       }
 
       const { orderId, paymentUrl } = payload;
-      if (typeof orderId !== 'string' || typeof paymentUrl !== 'string') {
+      if (typeof orderId !== 'string') {
         setError('The checkout answered something unexpected.');
         setBusy(false);
         return;
@@ -123,6 +123,14 @@ export function CheckoutForm({ slug, products }: { slug: string; products: reado
         window.localStorage.setItem(pendingOrderKey(slug), orderId);
       } catch {
         // Then Back lands on this form instead of the confirmation. Not worth failing over.
+      }
+
+      if (typeof paymentUrl !== 'string') {
+        // 202: the order is placed and the bank could not be reached. Payments are the control
+        // plane's (CE2), so on a dedicated instance this is what an outage of OURS looks like --
+        // the shop sold, and the confirmation page says the money has not been taken yet (CG1).
+        router.replace(`/t/${slug}/order/${orderId}`);
+        return;
       }
       window.location.href = paymentUrl;
     } catch (cause) {

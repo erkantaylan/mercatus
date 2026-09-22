@@ -579,3 +579,41 @@ file is where they are amended.
 - **`docs/OPEN-DEFECTS.md` was found untracked in the working tree** and committed unchanged, by
   whoever wrote it. It is an RLS verifier's report (composite foreign keys, F1) and nothing in
   task 09 touches it — but an uncommitted defect report is a defect report that gets lost.
+
+## Task 10 — AppHost B, the dedicated instance
+
+- **The AppHosts are `aspire/AppHostA` and `aspire/AppHostB`**, not the `control-plane` /
+  `acme-vps` names in BUILD-PLAN §8.4. Task 05 named A; B follows it rather than splitting the
+  naming across one directory.
+- **B binds to A through the EDGE, not through localhost ports:**
+  `http://platform.localtest.me:8080` and `http://bank.localtest.me:8080` (BUILD-PLAN §8.4 wrote
+  `http://localhost:4001`). Traefik exists as of task 05 and its hostnames are the stable
+  addresses the two-AppHost split needs; the identity external service still names Logto's own
+  fixed host port `127.0.0.1:3011`, because A's edge has no router for it and its `ENDPOINT` —
+  which is baked into the discovery document — is that address.
+- **B runs the store as an executable, not `AddDockerfile`.** There is no Dockerfile in the repo
+  and AppHost A runs the same `apps/store` as a host process; building a pnpm-workspace image for
+  one laptop resource would be twenty minutes of Docker for no property the demo needs. It is
+  still one image in the sense `CC1` means: the same source, the same process, one environment
+  variable apart.
+- **A dedicated instance REGISTERS ITSELF at provision time** — `apps/store/src/provision.ts`,
+  run by B as `provision-zenith`. It presents the one-time bootstrap token, writes the
+  per-instance credential 0600 and mirrors the tenant into its own database. That is
+  architecture.md §7 with no human in it, and it is idempotent: with the credential file present
+  it skips registration, because a bootstrap token can only ever be spent once (CK2).
+- **Two environment variables added to the §8.2 contract:** `INSTANCE_TOKEN_PATH` (store — where
+  the install command left the credential) and `INSTANCE_BOOTSTRAP_TOKEN` (the install command
+  only, never the server). `TENANT_NAME` and `DEV_SEED_CATALOG` are read by the install command
+  alone and are dev-loop conveniences, like the pooled seed.
+- **B holds none of A's secrets except the bank's.** Its own `AUTH_STUB_SECRET` and
+  `SESSION_SECRET` differ from A's, because nothing cross-verifies them; `PLATFORM_INTERNAL_TOKEN`
+  is absent by design (CE1). `FAKE_BANK_HMAC_SECRET` is shared, which is the CE2 compromise task
+  07a already recorded — the correct path is the control plane's `POST /payments/proxy`.
+- **The storefront answers 202, not 502, when the bank cannot be reached.** The order is placed,
+  priced and numbered; only the payment is missing, and on a dedicated instance that is the
+  designed state during an outage of ours (CG1). The confirmation page says "Placed, not yet
+  paid" instead of showing a shopper a failure they cannot act on.
+- **A dev catalog for the dedicated tenant lives in the install command**, gated behind
+  `DEV_SEED_CATALOG=1`, rather than in `packages/db-store/src/seed.ts`. The pooled seed is about
+  two tenants that must exist for the leak suite; this one is about a shop having something to
+  sell in a demo, and it must never run in a published topology.
