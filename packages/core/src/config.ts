@@ -56,6 +56,27 @@ const storeEnvSchema = z
     AUTH_ADAPTER: authAdapterSchema.default('stub'),
     AUTH_STUB_SECRET: z.string().optional(),
 
+    /**
+     * The real issuer (task 08). One issuer, one JWKS, never two (CD4). The cache path is a
+     * FILE: the adapter writes the discovery document, the key set and the organization ->
+     * tenant directory into it, and reads them back with the control plane down (CG1).
+     */
+    OIDC_ISSUER: z.url().optional(),
+    OIDC_CLIENT_ID: z.string().min(1).optional(),
+    OIDC_CLIENT_SECRET: z.string().min(1).optional(),
+    OIDC_JWKS_CACHE_PATH: z.string().min(1).default('.identity-cache/store.json'),
+
+    /**
+     * The key the store signs its OWN session cookie with. Deliberately separate from
+     * AUTH_STUB_SECRET: the session outlives the stub, and a dedicated instance holds this one
+     * and nothing else of ours (CE1).
+     */
+    SESSION_SECRET: z.string().optional(),
+    SESSION_TTL_SECONDS: positiveSecondsSchema.default(43_200),
+
+    /** Absolute, browser-visible base URL of this store -- the OIDC redirect_uri is built on it. */
+    STORE_PUBLIC_URL: z.url().optional(),
+
     /** The DNS suffix this deployment answers on, for host-based tenant resolution (§3.6). */
     BASE_HOST: z.string().min(1).default('localtest.me'),
 
@@ -80,6 +101,21 @@ const storeEnvSchema = z
         message: 'AUTH_ADAPTER=stub needs AUTH_STUB_SECRET (at least 32 characters).',
       });
     }
+    if (env.AUTH_ADAPTER === 'oidc' && !env.OIDC_ISSUER) {
+      // Only the issuer is required. The CLIENT registration is pulled into the identity cache
+      // by the bootstrap, because an instance registers itself rather than being handed
+      // credentials by hand (CE7) -- and it may be a different client per instance (CE1).
+      ctx.addIssue({ code: 'custom', path: ['OIDC_ISSUER'], message: 'AUTH_ADAPTER=oidc needs OIDC_ISSUER.' });
+    }
+    if (!env.SESSION_SECRET && !env.AUTH_STUB_SECRET) {
+      // The session key falls back to the stub secret so nothing that worked before task 08 has
+      // to be reconfigured; with a real issuer there is no stub secret, so it must be set.
+      ctx.addIssue({
+        code: 'custom',
+        path: ['SESSION_SECRET'],
+        message: 'SESSION_SECRET is required (at least 32 characters).',
+      });
+    }
   });
 
 export interface StoreConfig {
@@ -94,6 +130,14 @@ export interface StoreConfig {
   readonly databaseUrl: string;
   readonly authAdapter: 'stub' | 'oidc';
   readonly authStubSecret: string | undefined;
+  readonly oidcIssuer: string | undefined;
+  readonly oidcClientId: string | undefined;
+  readonly oidcClientSecret: string | undefined;
+  readonly oidcJwksCachePath: string;
+  /** Falls back to AUTH_STUB_SECRET so a stub deployment needs no new variable. */
+  readonly sessionSecret: string;
+  readonly sessionTtlSeconds: number;
+  readonly storePublicUrl: string | undefined;
   readonly baseHost: string;
   readonly platformUrl: string | undefined;
   readonly instanceToken: string | undefined;
@@ -128,6 +172,13 @@ export function loadStoreConfig(env: EnvSource = process.env): StoreConfig {
     databaseUrl: value.DATABASE_URL,
     authAdapter: value.AUTH_ADAPTER,
     authStubSecret: value.AUTH_STUB_SECRET,
+    oidcIssuer: value.OIDC_ISSUER,
+    oidcClientId: value.OIDC_CLIENT_ID,
+    oidcClientSecret: value.OIDC_CLIENT_SECRET,
+    oidcJwksCachePath: value.OIDC_JWKS_CACHE_PATH,
+    sessionSecret: value.SESSION_SECRET ?? value.AUTH_STUB_SECRET ?? '',
+    sessionTtlSeconds: value.SESSION_TTL_SECONDS,
+    storePublicUrl: value.STORE_PUBLIC_URL,
     baseHost: value.BASE_HOST,
     platformUrl: value.PLATFORM_URL,
     instanceToken: value.INSTANCE_TOKEN,

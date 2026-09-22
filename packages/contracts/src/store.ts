@@ -178,6 +178,37 @@ export const devLoginResultSchema = z.object({
   expiresAt: z.number().int().positive(),
 });
 
+/* ---------------------------------------------------------------------- session */
+
+/**
+ * The store's OWN session (task 08). After the OIDC round trip the browser holds a cookie this
+ * store signed, and every request after that is checked locally -- which is what keeps a
+ * dedicated instance selling while the control plane is down (README Q20).
+ */
+export const sessionInfoSchema = z.object({
+  kind: z.enum(['staff', 'shopper']),
+  subject: z.string(),
+  /** Always null for a shopper: a shopper session is tenant-less on purpose (BI2). */
+  tenantId: z.uuid().nullable(),
+  roles: z.array(z.enum(['owner', 'staff'])),
+  expiresAt: z.number().int().positive(),
+  /** Which adapter authenticated this person -- `stub` until the Identity phase lands. */
+  issuedBy: z.enum(['stub', 'oidc']),
+});
+
+export const startLoginQuerySchema = z.object({
+  audience: z.enum(['staff', 'shopper']).default('staff'),
+  /** Selects the organization for a staff login; ignored for shoppers. */
+  slug: slugSchema.optional(),
+  /** Where to send the browser once the session cookie is set. Must be a relative path. */
+  next: z.string().startsWith('/').default('/'),
+});
+
+export const loginCallbackQuerySchema = z.object({
+  code: z.string().min(1),
+  state: z.string().min(1),
+});
+
 /* ------------------------------------------------------------------- inferred */
 
 export type Branding = z.infer<typeof brandingSchema>;
@@ -201,3 +232,6 @@ export type LicenceView = z.infer<typeof licenceViewSchema>;
 export type StoreMeta = z.infer<typeof storeMetaSchema>;
 export type StoreHealth = z.infer<typeof storeHealthSchema>;
 export type DevLoginResult = z.infer<typeof devLoginResultSchema>;
+export type SessionInfo = z.infer<typeof sessionInfoSchema>;
+export type StartLoginQuery = z.infer<typeof startLoginQuerySchema>;
+export type LoginCallbackQuery = z.infer<typeof loginCallbackQuerySchema>;

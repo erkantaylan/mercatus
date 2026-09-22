@@ -34,17 +34,35 @@ const string PlatformApp = "mercatus_platform_app:mercatus_platform_app_dev";
 // discovered at the first payment instead of at the first start.
 const string AuthStubSecret = "mercatus-dev-auth-stub-secret-0123456789";
 const string FakeBankHmacSecret = "mercatus-dev-fake-bank-hmac-secret-0123456789";
+// The store signs its OWN session cookie with this, and keeps verifying it while the control
+// plane is down (README Q20). Separate from the stub secret on purpose: the session outlives the
+// stub, and a dedicated instance holds this one and nothing else of ours (CE1).
+const string SessionSecret = "mercatus-dev-session-secret-0123456789";
 
 const int PlatformPort = 4001;
 const int StorePooledPort = 4002;
 const int FakeBankPort = 4004;
 const int TraefikPort = 8080;
+// Logto's own defaults are 3001 and 3002, which are the two storefronts here (BUILD-PLAN 8.1).
+// The container keeps its internal ports; only the host side moves.
+const int LogtoPort = 3011;
+const int LogtoAdminPort = 3012;
 
 var repoRoot = "../..";
 
 // Pre-built strings. An interpolated literal handed to WithEnvironment binds to the
 // ReferenceExpression overload, and an int is not an IValueProvider.
 var platformBase = $"http://127.0.0.1:{PlatformPort}";
+var storePooledBase = $"http://127.0.0.1:{StorePooledPort}";
+var logtoBase = $"http://127.0.0.1:{LogtoPort}";
+var logtoAdminBase = $"http://127.0.0.1:{LogtoAdminPort}";
+var logtoIssuer = $"{logtoBase}/oidc";
+
+// AUTH_ADAPTER for the data plane. The DEFAULT IS STILL `stub`, deliberately: the dashboard, the
+// admin console and the storefront all sign in through `/dev/login/*`, which exists only while
+// the stub is the adapter. `MERCATUS_AUTH_ADAPTER=oidc aspire run` swaps the whole data plane
+// onto Logto, and nothing else about the topology changes (CC1).
+var authAdapter = Environment.GetEnvironmentVariable("MERCATUS_AUTH_ADAPTER") is "oidc" ? "oidc" : "stub";
 var fakeBankBase = $"http://127.0.0.1:{FakeBankPort}";
 var traefikEntrypoint = $"--entrypoints.web.address=:{TraefikPort}";
 
@@ -62,6 +80,11 @@ var dbPlatform = pgPlatform.AddDatabase("db-platform", "platform");
 
 var pgStore = builder.AddPostgres("pg-store", pgUser, pgPassword);
 var dbStore = pgStore.AddDatabase("db-store", "store");
+
+// Identity gets its OWN server too. It is a bought component (CD1, CD2) with a schema we do not
+// own and must never migrate, so it does not share a cluster with anything we do own.
+var pgLogto = builder.AddPostgres("pg-logto", pgUser, pgPassword);
+var dbLogto = pgLogto.AddDatabase("db-logto", "logto");
 
 // postgres://<role>@<host:port>/<database>. The endpoint is resolved by Aspire at run time --
 // AddPostgres binds a random host port, so nothing here may hard-code one.
@@ -112,6 +135,56 @@ if (builder.ExecutionContext.IsRunMode)
 }
 
 // ---------------------------------------------------------------------------------------------
+// Identity -- a Logto CONTAINER we configure, never fork (CD1, CD2). One issuer for both planes
+// and both audiences, so a dedicated store on somebody else's server has exactly one JWKS to
+// cache (CD4).
+//
+// The entrypoint is the one from Logto's own compose file: seed the database if it is empty
+// ("--swe" = skip when exists, so a restart is not a re-seed), then start. ENDPOINT and
+// ADMIN_ENDPOINT must be the HOST-VISIBLE urls, because they end up in the discovery document
+// and in every redirect the browser follows.
+// ---------------------------------------------------------------------------------------------
+var logto = builder.AddContainer("logto", "svhd/logto", "1.43.0")
+    .WithEntrypoint("sh")
+    .WithArgs("-c", "npm run cli db seed -- --swe && npm start")
+    .WithEnvironment("TRUST_PROXY_HEADER", "1")
+    .WithEnvironment("DB_URL", SuperuserUrl(pgLogto, "logto"))
+    .WithEnvironment("ENDPOINT", logtoBase)
+    .WithEnvironment("ADMIN_ENDPOINT", logtoAdminBase)
+    .WithHttpEndpoint(port: LogtoPort, targetPort: 3001, name: "core")
+    .WithHttpEndpoint(port: LogtoAdminPort, targetPort: 3002, name: "admin")
+    // /api/status answers **204**, and WithHttpHealthCheck defaults to expecting 200 -- leaving
+    // the default makes the resource never go healthy and every WaitFor on it hang forever, with
+    // nothing in the log but "changed state: Starting -> Waiting". There is no /health.
+    .WithHttpHealthCheck("/api/status", 204, "core")
+    .WaitFor(dbLogto);
+
+// Provisioning, not migration: organizations = tenants, one application per surface, staff users
+// with organization membership and shoppers with none (CD3). Idempotent, so a re-run is a no-op
+// (CK2). It reads the seeded `m-default` M2M secret out of Logto's own database -- see
+// packages/identity/src/logto.ts for why that is the only way in without a browser.
+//
+// It also writes the data plane's identity cache: client registration, discovery document, key
+// set and the organization -> slug directory. That file is what lets a store verify an
+// organization token offline from its first request rather than only after somebody signs in.
+// `pnpm --filter <pkg> <script>` runs the script with cwd = the PACKAGE directory, NOT this
+// executable's working directory. So the bootstrap's own paths climb back out of
+// packages/identity, while the store's climb out of apps/store -- both landing on the same file
+// at the repo root. Getting this wrong writes a cache nobody reads and fails silently.
+var identityCache = ".identity/store-pooled.json";
+var identityCacheFromPackage = $"../../{identityCache}";
+var logtoBootstrap = builder.AddExecutable("logto-bootstrap", "pnpm", repoRoot,
+        "--filter", "@mercatus/identity", "bootstrap")
+    .WithEnvironment("LOGTO_ENDPOINT", logtoBase)
+    .WithEnvironment("LOGTO_ADMIN_ENDPOINT", logtoAdminBase)
+    .WithEnvironment("LOGTO_DB_URL", SuperuserUrl(pgLogto, "logto"))
+    .WithEnvironment("IDENTITY_CACHE_PATH", identityCacheFromPackage)
+    .WithEnvironment("IDENTITY_OUT", "../../.identity/bootstrap.json")
+    .WithEnvironment("STORE_POOLED_URL", storePooledBase)
+    .WithEnvironment("STORE_DEDICATED_URL", "http://127.0.0.1:4003")
+    .WaitFor(logto);
+
+// ---------------------------------------------------------------------------------------------
 // Services. HOST=0.0.0.0 because Traefik reaches them from inside a container, over the docker
 // host gateway; a listener bound to 127.0.0.1 is not reachable from there.
 // ---------------------------------------------------------------------------------------------
@@ -154,13 +227,28 @@ var storePooled = Node("store-pooled", "store", StorePooledPort)
     // One image, two modes, no second code path (CC1). This is the pooled half.
     .WithEnvironment("DEPLOYMENT_MODE", "pooled")
     .WithEnvironment("DATABASE_URL", Url(pgStore, StoreApp, "store"))
-    .WithEnvironment("AUTH_ADAPTER", "stub")
+    .WithEnvironment("AUTH_ADAPTER", authAdapter)
+    // Both are always set. The stub secret is inert under AUTH_ADAPTER=oidc, and the issuer is
+    // inert under `stub` -- which is what makes the swap one environment variable (CC1, CC3).
     .WithEnvironment("AUTH_STUB_SECRET", AuthStubSecret)
+    .WithEnvironment("OIDC_ISSUER", logtoIssuer)
+    // Relative to the store's own working directory, which is apps/store.
+    .WithEnvironment("OIDC_JWKS_CACHE_PATH", $"../../{identityCache}")
+    .WithEnvironment("SESSION_SECRET", SessionSecret)
+    .WithEnvironment("STORE_PUBLIC_URL", storePooledBase)
     .WithEnvironment("BASE_HOST", "localtest.me")
     .WithEnvironment("PLATFORM_URL", platformBase)
     .WithReference(dbStore)
     .WaitFor(dbStore)
     .WaitForCompletion(migrateStore);
+
+if (authAdapter is "oidc")
+{
+    // The store PULLS its client registration and the key set out of the identity cache, so the
+    // bootstrap has to have finished before it boots (CE7). Under `stub` this edge does not
+    // exist and Logto is simply a resource sitting there, costing a container.
+    storePooled.WaitForCompletion(logtoBootstrap);
+}
 
 if (devSeed is not null)
 {

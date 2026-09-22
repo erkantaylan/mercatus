@@ -5,6 +5,8 @@ export * from './tenant/context.js';
 export * from './tenant/resolve.js';
 export * from './auth/types.js';
 export * from './auth/stub-adapter.js';
+export * from './auth/oidc-adapter.js';
+export * from './auth/session.js';
 export * from './auth/factory.js';
 export * from './auth/plugin.js';
 export * from './http/server.js';

@@ -8,3 +8,6 @@ coverage/
 .env.*
 !.env.example
 .DS_Store
+
+# Identity cache and bootstrap output -- per-machine, written by packages/identity.
+.identity/

@@ -1,4 +1,5 @@
 import { MercatusError } from '../errors.js';
+import { LogtoAuthAdapter, type LogtoAuthAdapterOptions } from './oidc-adapter.js';
 import { StubAuthAdapter, type StubAuthAdapterOptions } from './stub-adapter.js';
 import type { AuthAdapter } from './types.js';
 
@@ -6,6 +7,7 @@ export interface AuthAdapterConfig {
   /** AUTH_ADAPTER. */
   readonly adapter: 'stub' | 'oidc';
   readonly stub?: StubAuthAdapterOptions;
+  readonly oidc?: LogtoAuthAdapterOptions;
 }
 
 /**
@@ -19,9 +21,12 @@ export function createAuthAdapter(config: AuthAdapterConfig): AuthAdapter {
     }
     return new StubAuthAdapter(config.stub);
   }
-  throw new MercatusError(
-    'CONFIG_INVALID',
-    500,
-    'The oidc adapter arrives with the Identity phase (BUILD-PLAN task 12).',
-  );
+  if (!config.oidc) {
+    throw new MercatusError(
+      'CONFIG_INVALID',
+      500,
+      'AUTH_ADAPTER=oidc needs OIDC_ISSUER, OIDC_CLIENT_ID, OIDC_CLIENT_SECRET and OIDC_JWKS_CACHE_PATH.',
+    );
+  }
+  return new LogtoAuthAdapter(config.oidc);
 }

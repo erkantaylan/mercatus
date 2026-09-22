@@ -495,3 +495,47 @@ file is where they are amended.
   correctly and never hydrates, with the explanation printed only in the dev server's log.
 - **`apps/storefront` is not in `aspire/AppHostA/apphost.cs`.** Same reason as the dashboard:
   three front ends were being built at once and the AppHost is one file.
+
+## Task 08 — real identity, Logto behind the adapter
+
+- **The store's session cookie carries the SAME claim shape as a stub token**, so `toPrincipal`
+  stays the single place a set of claims becomes a `Principal`. Only the issuer and the key differ.
+- **Cookie handling is hand-rolled (~20 lines) rather than `@fastify/cookie`.** One cookie, read
+  and written in one module; a dependency and another `allowBuilds` risk bought nothing.
+- **The login `state` is a 10-minute JWT signed with the session key, not a row.** It has to
+  survive a redirect, not a restart, and a server-side login store would be the only stateful
+  thing in the data plane.
+- **A shopper never presents a Logto bearer token to the store.** `verify()` accepts organization
+  tokens only; a shopper signs in once and carries the store's own session cookie from then on.
+  That is what the README's Q20 answer describes, and it keeps `verify()` free of a second shape.
+- **An organization token carries no roles, so roles are cached at sign-in and an unknown subject
+  gets the LEAST privilege (`['staff']`).** Logto's organization token has an empty `scope` and no
+  role claim; the roles live in the id token, which the adapter only sees during `exchange()`.
+- **The Logto organization's NAME is the tenant slug, and the organization id is not stored
+  anywhere of ours** (BV1). The adapter keeps an org id → slug directory in its disk cache, learnt
+  from the userinfo endpoint at sign-in and pre-seeded by the bootstrap.
+- **An instance PULLS its own client registration** out of the identity cache rather than being
+  handed `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` (they still win when set). A store created after
+  the bootstrap cannot be given credentials that did not exist when the AppHost was written, and
+  pulling is the shape CE7 asks for anyway.
+- **The bootstrap reads Logto's own database once**, for the `m-default` M2M secret the seed
+  generates. Everything after that is the Management API. The alternative is a human in the admin
+  console before anything can be automated.
+- **AppHost A still defaults to `AUTH_ADAPTER=stub`; `MERCATUS_AUTH_ADAPTER=oidc aspire run` flips
+  the data plane onto Logto.** The dashboard, the admin console and the storefront all sign in
+  through `/dev/login/*`, which a store on `oidc` does not register — defaulting to `oidc` would
+  break three working front ends to prove a point the gate already proves.
+- **Logto is on host ports 3011 (core) and 3012 (admin console).** Its own defaults, 3001 and 3002,
+  are the two storefronts in §8.1.
+- **Identity gets its own Postgres server** (`pg-logto`), not a database beside ours. It is a
+  bought component with a schema we neither own nor migrate (CD1, CD2).
+- **Seven environment variables added to the §8.2 contract.** Store: `OIDC_JWKS_CACHE_PATH` (a
+  FILE — discovery, keys, client registration and the organization directory in one),
+  `SESSION_SECRET`, `SESSION_TTL_SECONDS`, `STORE_PUBLIC_URL`. `OIDC_ISSUER`, `OIDC_CLIENT_ID` and
+  `OIDC_CLIENT_SECRET` were already named there. Bootstrap-only: `LOGTO_ENDPOINT`,
+  `LOGTO_ADMIN_ENDPOINT`, `LOGTO_DB_URL`, `IDENTITY_CACHE_PATH`, `IDENTITY_OUT`,
+  `IDENTITY_TENANT_SLUGS`, `IDENTITY_DEV_PASSWORD` — none of them reaches a server process.
+- **The gate is a shell script committed to the repo** (`packages/identity/scripts/`), not a
+  Playwright run. Logto has no password grant and refuses the PAT token-exchange grant for these
+  client types, so the authorization-code flow is the only real login — and it drives fine through
+  Logto's own Experience API with a cookie jar.

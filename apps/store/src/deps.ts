@@ -6,7 +6,13 @@
  */
 import { readFileSync } from 'node:fs';
 
-import type { AuthAdapter, StoreConfig, TenantDirectory, TenantRef } from '@mercatus/core';
+import type {
+  AuthAdapter,
+  SessionIssuer,
+  StoreConfig,
+  TenantDirectory,
+  TenantRef,
+} from '@mercatus/core';
 import type { StoreDb, StoreDbHandle, TenantRow } from '@mercatus/db-store';
 import { createStoreDb, findTenantById, findTenantBySlug } from '@mercatus/db-store';
 
@@ -14,6 +20,8 @@ export interface StoreDeps {
   readonly config: StoreConfig;
   readonly db: StoreDb;
   readonly adapter: AuthAdapter;
+  /** The store's OWN session, signed and verified here. It outlives the issuer (README Q20). */
+  readonly session: SessionIssuer;
   /** Reported on /health and on every telemetry batch (CE6). Never assumed by the control plane. */
   readonly version: string;
   readonly tenants: TenantDirectory;

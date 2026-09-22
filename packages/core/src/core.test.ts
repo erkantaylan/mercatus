@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  LogtoAuthAdapter,
   MissingTenantContextError,
   NotFoundError,
+  SESSION_COOKIE_NAME,
+  SessionIssuer,
   StubAuthAdapter,
+  readCookie,
   currentTenant,
   normalisePageRequest,
   pagedResult,
@@ -90,5 +94,86 @@ describe('errors and paging', () => {
   it('clamps a page request and shapes a list', () => {
     expect(normalisePageRequest({ limit: 10_000, offset: -5 })).toEqual({ limit: 200, offset: 0 });
     expect(pagedResult([1, 2], 2)).toEqual({ items: [1, 2], total: 2 });
+  });
+});
+
+describe('SessionIssuer', () => {
+  const session = new SessionIssuer({ secret: SECRET, ttlSeconds: 60, secureCookie: false });
+
+  it('round-trips a staff principal through a cookie the store signed itself', async () => {
+    const token = await session.issue({
+      kind: 'staff',
+      subject: 'user-1',
+      tenantId: ACME,
+      roles: ['owner'],
+      expiresAt: 0,
+    });
+    const cookie = session.cookie(token);
+    expect(cookie).toContain(`${SESSION_COOKIE_NAME}=`);
+    expect(cookie).toContain('HttpOnly');
+    // SameSite=Lax, not Strict: the cookie has to survive the redirect back from the issuer.
+    expect(cookie).toContain('SameSite=Lax');
+
+    const value = readCookie(`other=1; ${cookie.split(';')[0] ?? ''}`, SESSION_COOKIE_NAME);
+    expect(await session.verify(value)).toMatchObject({
+      kind: 'staff',
+      subject: 'user-1',
+      tenantId: ACME,
+      roles: ['owner'],
+    });
+  });
+
+  it('keeps a shopper session tenant-less (BI2)', async () => {
+    const token = await session.issue({
+      kind: 'shopper',
+      subject: 'shopper-1',
+      tenantId: null,
+      expiresAt: 0,
+    });
+    expect(await session.verify(token)).toMatchObject({ kind: 'shopper', tenantId: null });
+  });
+
+  it('refuses a cookie signed with another key, and anything malformed', async () => {
+    const other = new SessionIssuer({ secret: `${SECRET}-different`, secureCookie: false });
+    const foreign = await other.issue({
+      kind: 'shopper',
+      subject: 'x',
+      tenantId: null,
+      expiresAt: 0,
+    });
+    expect(await session.verify(foreign)).toBeNull();
+    expect(await session.verify('not-a-jwt')).toBeNull();
+    expect(await session.verify(undefined)).toBeNull();
+  });
+
+  it('refuses a secret jose cannot use for HS256', () => {
+    expect(() => new SessionIssuer({ secret: 'too-short' })).toThrow(/at least 32/);
+  });
+});
+
+describe('LogtoAuthAdapter', () => {
+  const oidc = new LogtoAuthAdapter({
+    issuer: 'http://127.0.0.1:1/oidc',
+    cachePath: '/nonexistent/identity-cache.json',
+  });
+
+  it('is the oidc adapter and starts with an empty directory', () => {
+    expect(oidc.name).toBe('oidc');
+    expect(oidc.knownOrganizations()).toEqual({});
+  });
+
+  it('verifies nothing and throws nothing with no cached key set (CG1)', async () => {
+    expect(await oidc.verify('')).toBeNull();
+    expect(await oidc.verify('a.b.c')).toBeNull();
+  });
+
+  it('reports an unreachable issuer instead of throwing (CG3)', async () => {
+    expect(await oidc.issuerReachable()).toBe(false);
+  });
+
+  it('refuses to start a login when the instance is not registered', async () => {
+    await expect(
+      oidc.authorizeUrl({ redirectUri: 'http://127.0.0.1:4002/auth/callback', audience: 'staff', state: 's' }),
+    ).rejects.toThrow(/not registered/);
   });
 });

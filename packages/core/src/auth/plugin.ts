@@ -25,6 +25,7 @@ import {
 import type { TenantContext } from '../tenant/context.js';
 import type { TenantResolutionConfig } from '../tenant/resolve.js';
 import { tenantCandidates } from '../tenant/resolve.js';
+import { readCookie, type SessionIssuer } from './session.js';
 import type { AuthAdapter, Principal, StaffRole } from './types.js';
 
 /** What a tenant lookup returns. The id is the uuid; the slug is what appears in URLs (BV3). */
@@ -47,6 +48,12 @@ export interface AuthContextOptions {
   /** Omitted by a service with no tenants of its own (fake-bank). */
   readonly tenants?: TenantDirectory;
   readonly deployment?: TenantResolutionConfig;
+  /**
+   * The store's OWN session cookie, checked when there is no bearer token. It is what keeps a
+   * dedicated instance serving signed-in people while the issuer is unreachable (README Q20) --
+   * a cookie this process signed needs nobody's permission to verify.
+   */
+  readonly session?: SessionIssuer;
 }
 
 declare module 'fastify' {
@@ -134,6 +141,17 @@ export function registerAuthContext(app: FastifyInstance, options: AuthContextOp
       // S1: the client gets one generic failure from whichever route needs auth. The reason the
       // token did not verify is logged here and goes no further.
       req.log.debug({ route: req.url }, 'bearer token did not verify');
+    }
+
+    if (!req.principal && options.session) {
+      // A bearer token wins when one is present, so a stale cookie can never quietly override an
+      // explicit credential. Otherwise the session is the credential, and it is verified with a
+      // key this process holds -- no issuer, no network, no control plane (CG1).
+      const cookie = readCookie(req.headers.cookie, options.session.cookieName);
+      req.principal = await options.session.verify(cookie);
+      if (cookie && !req.principal) {
+        req.log.debug({ route: req.url }, 'session cookie did not verify');
+      }
     }
 
     if (options.tenants && options.deployment) {
