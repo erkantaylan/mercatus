@@ -23,7 +23,12 @@
  *
  *   1. two pooled tenants in one process and one database (acme, borg)
  *   2. two dedicated tenants, each its own AppHost, process, Postgres and port (zenith, orion)
- *   3. one shopper account buying at all four
+ *   3. one shopper account buying at all four -- and read that precisely. Under the STUB adapter
+ *      every store is its own issuer (each box has its own `AUTH_STUB_SECRET`, correctly, CE1),
+ *      so what is shared here is the IDENTITY, not one session: the same person signs in at each
+ *      origin and the store API scopes every read by route-tenant AND token-subject (BI2). One
+ *      issuer session carried across all four, with no second password, is what
+ *      `05-oidc-four-tenants.spec.ts` proves on a real issuer.
  *   4. four merchants who can each see only their own orders
  *   5. the control plane stopped -- and BOTH dedicated stores still completing a checkout
  *
@@ -188,9 +193,15 @@ test.describe('two pooled and TWO dedicated tenants, at once', () => {
       const foreign = await probe(box.store, `/t/${other?.slug ?? 'nobody'}/branding`);
       expect(foreign.status, `${box.slug} must not know ${String(other?.slug)}`).not.toBe(200);
 
-      const view = await licenceView(box.store, box.slug);
-      expect(view.status).toBe('active');
-      expect(view.state).toBe('healthy');
+      // POLLED, not asserted once. `03` stops the control plane and brings it back, and orion --
+      // which `03` never touches -- notices the outage and the recovery on ITS own five-second
+      // timer. Reading the state the instant that file finishes catches a box legitimately still
+      // in `grace`, one poll away from healthy. The claim is that it recovers by itself, so the
+      // wait is the claim; an instant read was asserting the scheduler's luck.
+      expect((await licenceView(box.store, box.slug)).status).toBe('active');
+      await expect
+        .poll(async () => (await licenceView(box.store, box.slug)).state, { timeout: 45_000 })
+        .toBe('healthy');
     }
   });
 
