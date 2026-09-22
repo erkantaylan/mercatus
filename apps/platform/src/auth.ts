@@ -9,10 +9,16 @@
  *              sha256 hash, per instance and individually revocable (CE1).
  *   bootstrap  a one-time registration token, in the BODY of /installations/register, hashed the
  *              same way and burned on first use.
+ *   internal   the POOLED data plane, which is ours and runs beside us. It may read any tenant's
+ *              licence, because it serves every tenant, and it may read NOTHING else. A shared
+ *              secret is acceptable here and only here: CE1 is about a box whose owner has root,
+ *              and this one has no owner but us.
  *
  * Every failure below returns ONE generic code and logs which check actually failed (S1). An
  * endpoint that says "unknown installation" rather than "not authenticated" is an oracle.
  */
+import { timingSafeEqual } from 'node:crypto';
+
 import { ForbiddenError, UnauthenticatedError } from '@mercatus/core';
 import { findInstallationByInstanceHash, hashToken } from '@mercatus/db-platform';
 import type { FastifyInstance, FastifyRequest, preHandlerHookHandler } from 'fastify';
@@ -36,7 +42,12 @@ export interface InstancePrincipal {
   readonly tenantId: string;
 }
 
-export type PlatformPrincipal = OperatorPrincipal | InstancePrincipal;
+/** The pooled plane. Named rather than anonymous so BH2's log line says who read what. */
+export interface InternalPrincipal {
+  readonly kind: 'internal';
+}
+
+export type PlatformPrincipal = OperatorPrincipal | InstancePrincipal | InternalPrincipal;
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -141,9 +152,19 @@ export function requireInstance(deps: PlatformDeps): preHandlerHookHandler {
 }
 
 /**
- * The licence endpoints answer both the console and the box the licence belongs to. Which one is
- * asking still matters: an instance may read ITS tenant and no other, which `assertMayReadTenant`
- * below enforces at the point of use.
+ * Constant-time compare. The internal token is checked on every licence poll of every tenant, so
+ * a naive `===` here is a timing oracle with a generous number of samples.
+ */
+function sameToken(a: string, b: string): boolean {
+  const left = Buffer.from(a);
+  const right = Buffer.from(b);
+  return left.length === right.length && timingSafeEqual(left, right);
+}
+
+/**
+ * The licence endpoints answer the console, the box the licence belongs to, and our own pooled
+ * plane. Which one is asking still matters: an instance may read ITS tenant and no other, which
+ * `assertMayReadTenant` below enforces at the point of use.
  */
 export function requireOperatorOrInstance(deps: PlatformDeps): preHandlerHookHandler {
   return async function eitherGuard(req) {
@@ -151,12 +172,18 @@ export function requireOperatorOrInstance(deps: PlatformDeps): preHandlerHookHan
     if (!token) {
       throw new UnauthenticatedError(undefined, { logDetail: 'no bearer token on a licence route' });
     }
+    const internal = deps.config.internalToken;
+    if (internal && sameToken(token, internal)) {
+      req.platformPrincipal = { kind: 'internal' };
+      return;
+    }
     const secret = deps.config.authStubSecret;
     const operator = secret ? await verifyOperatorToken(secret, token) : null;
     const principal = operator ?? (await verifyInstanceToken(deps, token));
     if (!principal) {
       throw new UnauthenticatedError(undefined, {
-        logDetail: 'bearer token is neither an operator token nor a live instance token',
+        logDetail:
+          'bearer token is not the internal token, an operator token, or a live instance token',
       });
     }
     req.platformPrincipal = principal;
@@ -183,4 +210,8 @@ export function assertMayReadTenant(req: FastifyRequest, tenantId: string): void
       'operator read a tenant (BH2)',
     );
   }
+  // `internal` is the pooled plane and is deliberately unrestricted here: it serves every tenant
+  // in that database, so "this tenant and no other" has no meaning for it. It is not audited as
+  // a cross-tenant read either -- there is no operator behind it, and a line per tenant per poll
+  // would bury the ones BH2 exists to make findable.
 }

@@ -138,6 +138,13 @@ export const licencePollResultSchema = z.object({
   entitlements: entitlementsSchema,
   validUntil: isoDateSchema.nullable(),
   serverTime: isoDateTimeSchema,
+  /**
+   * Which licence these facts came from. The data plane does not store it -- it reports it back
+   * on the same tick's heartbeat, which is how a version-and-licence skew becomes queryable
+   * rather than a thing somebody has to ssh in and look at (CE6). Null while a tenant is still
+   * pending and has no licence to name.
+   */
+  licenceId: uuidSchema.nullable(),
 });
 
 /* ------------------------------------------------------------- installations */

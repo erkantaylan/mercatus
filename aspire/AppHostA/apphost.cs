@@ -38,6 +38,11 @@ const string FakeBankHmacSecret = "mercatus-dev-fake-bank-hmac-secret-0123456789
 // plane is down (README Q20). Separate from the stub secret on purpose: the session outlives the
 // stub, and a dedicated instance holds this one and nothing else of ours (CE1).
 const string SessionSecret = "mercatus-dev-session-secret-0123456789";
+// The credential the POOLED store polls its licences with (BUILD-PLAN 6.1: "instance token or
+// internal"). A dedicated plane never gets this -- it registers and is given its own revocable
+// instance token (CE1). This one is shared, and that is defensible for exactly one reason: the
+// pooled plane is a process we run, on our machine, beside the control plane.
+const string PlatformInternalToken = "mercatus-dev-internal-token-0123456789";
 
 const int PlatformPort = 4001;
 const int StorePooledPort = 4002;
@@ -215,6 +220,7 @@ var platform = Node("platform", "platform", PlatformPort)
     .WithEnvironment("DATABASE_URL", Url(pgPlatform, PlatformApp, "platform"))
     .WithEnvironment("AUTH_ADAPTER", "stub")
     .WithEnvironment("AUTH_STUB_SECRET", AuthStubSecret)
+    .WithEnvironment("PLATFORM_INTERNAL_TOKEN", PlatformInternalToken)
     .WithEnvironment("PLATFORM_URL", platformBase)
     .WithEnvironment("FAKE_BANK_URL", fakeBankBase)
     .WithEnvironment("FAKE_BANK_HMAC_SECRET", FakeBankHmacSecret)
@@ -237,7 +243,17 @@ var storePooled = Node("store-pooled", "store", StorePooledPort)
     .WithEnvironment("SESSION_SECRET", SessionSecret)
     .WithEnvironment("STORE_PUBLIC_URL", storePooledBase)
     .WithEnvironment("BASE_HOST", "localtest.me")
+    // CE4: the store PULLS. This is the only thing pointing at the control plane, and there is
+    // no route in the other direction anywhere in this file.
     .WithEnvironment("PLATFORM_URL", platformBase)
+    .WithEnvironment("PLATFORM_INTERNAL_TOKEN", PlatformInternalToken)
+    // Five seconds, not the 10-second default: the demo flips a tenant to passive in the console
+    // and the storefront has to refuse a checkout while somebody is still looking at the screen.
+    .WithEnvironment("LICENCE_POLL_SECONDS", "5")
+    // Sixty seconds, not the 72-hour default (CG2). A grace window is only demonstrable if you
+    // can sit through it, and a laptop topology is the one place that is true. Production keeps
+    // the default -- the number is configuration precisely so it can differ here.
+    .WithEnvironment("LICENCE_GRACE_SECONDS", "60")
     .WithReference(dbStore)
     .WaitFor(dbStore)
     .WaitForCompletion(migrateStore);

@@ -141,6 +141,12 @@ export async function placeOrder(
   return { orderId: order.id, number, totalMinor, currency };
 }
 
+/** For the telemetry batch (CE6). A count, never an order -- CI1 is a contract term, not a knob. */
+export async function countOrders(tx: StoreTx): Promise<number> {
+  const counted = await tx.select({ total: sql<number>`count(*)::int` }).from(orders);
+  return counted[0]?.total ?? 0;
+}
+
 export async function listOrders(
   tx: StoreTx,
   page: { limit: number; offset: number },

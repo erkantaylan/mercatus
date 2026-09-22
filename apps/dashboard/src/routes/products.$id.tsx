@@ -10,6 +10,7 @@ import { createFileRoute, Link, useRouter } from '@tanstack/react-router';
 
 import { ApiError } from '../api/client.js';
 import { ProductForm } from '../components/ProductForm.js';
+import { useLicence, writesRefused } from '../lib/licence.js';
 import { Banner, Button, Card, PageHeader, Spinner } from '../ui/index.js';
 
 export const Route = createFileRoute('/products/$id')({ component: EditProductPage });
@@ -18,6 +19,9 @@ function EditProductPage() {
   const { id } = Route.useParams();
   const { client } = Route.useRouteContext();
   const queryClient = useQueryClient();
+  // CG3: greyed out only while the control plane has been unreachable past the grace window.
+  const licence = useLicence(client);
+  const readOnly = writesRefused(licence.data);
   const router = useRouter();
 
   const product = useQuery({ queryKey: ['products', 'detail', id], queryFn: () => client.getProduct(id) });
@@ -68,6 +72,7 @@ function EditProductPage() {
           initial={product.data}
           submitLabel="Save changes"
           busy={save.isPending}
+          disabled={readOnly}
           error={
             failure === null
               ? undefined
@@ -84,7 +89,7 @@ function EditProductPage() {
               <span className="mc-spacer" />
               <Button
                 variant="danger"
-                disabled={remove.isPending}
+                disabled={remove.isPending || readOnly}
                 onClick={() => remove.mutate()}
               >
                 {remove.isPending ? 'Removing…' : 'Remove'}

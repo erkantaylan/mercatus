@@ -539,3 +539,43 @@ file is where they are amended.
   Playwright run. Logto has no password grant and refuses the PAT token-exchange grant for these
   client types, so the authorization-code flow is the only real login — and it drives fine through
   Logto's own Experience API with a cookie jar.
+
+## Task 09 — licence states, the heartbeat, and entitlements
+
+- **The POOLED store polls the control plane too, with a shared `PLATFORM_INTERNAL_TOKEN`.**
+  BUILD-PLAN §6.1 already said the licence route takes "an instance token **or** internal"; this
+  is that credential. CE1 (per-instance, revocable) is about a box whose owner has root — the
+  pooled plane is a process we run on our own machine, serving every tenant, so per-instance has
+  nothing to name. A dedicated plane never sees it: it registers and gets its own.
+- **`runtimeState` lost its `mode === 'pooled'` special case.** Pooled and dedicated now run the
+  same state machine (CC1, CC2). The old shortcut said pooled is always healthy; that was true
+  only while pooled did not poll. "Never polled successfully" is still healthy, which is what
+  keeps an instance with no `PLATFORM_URL` out of a permanent outage.
+- **The gate is opt-in per route, by `config: { licence: 'checkout' | 'write' }`**, not derived
+  from the HTTP verb. A gate you have to read the router to find is a gate somebody adds a route
+  around; a route that takes money declares the word or it is not gated, visibly.
+- **A passive tenant keeps every staff WRITE, not just reads.** `writesRefused` is `read_only`
+  only. The dashboard being "fully usable" (CG3) would be a half-truth if the merchant could read
+  their catalogue and not fix it.
+- **Two entitlement facts ride on `GET /t/:slug/branding`** rather than on a new public endpoint:
+  `licence.checkout` (`open` | `blocked_passive` | `blocked_unreachable`) and
+  `licence.poweredByMark`. The storefront already fetches branding once per page, and both are
+  per-tenant facts that change without a deploy.
+- **The "powered by" mark is the `whiteLabel` entitlement, absent-means-shown.** A tenant with an
+  empty entitlements blob gets the mark, never the paid behaviour (CC3). The admin console has a
+  button for it, so the rule is demonstrable rather than asserted.
+- **`licencePollResultSchema` gained `licenceId`.** The data plane does not store it — it reports
+  it back on the same tick's heartbeat, which is what makes version-and-licence skew queryable
+  (CE6) without a column on `licence_state`.
+- **Only a DEDICATED instance pushes telemetry.** The poll agent sends `POST /telemetry/heartbeat`
+  when it holds an `INSTANCE_TOKEN` and never otherwise: pooled usage is something we measure from
+  our own database (CJ1). Written and typechecked here; it is task 10's AppHost B that exercises it.
+- **AppHost A runs `LICENCE_POLL_SECONDS=5` and `LICENCE_GRACE_SECONDS=60`**, not the 10/259200
+  defaults. A grace window is only demonstrable if you can sit through it, and a laptop topology is
+  the one place that is true.
+- **Two environment variables added to the §8.2 contract:** `PLATFORM_INTERNAL_TOKEN` on both the
+  platform and the store. `LICENCE_POLL_SECONDS`, `LICENCE_GRACE_SECONDS`, `PLATFORM_URL` and
+  `INSTANCE_TOKEN` were already named there.
+- **`docs/OPEN-DEFECTS.md` was found untracked in the working tree** and committed unchanged, by
+  whoever wrote it. It is an RLS verifier's report (composite foreign keys, F1) and nothing in
+  task 09 touches it — but an uncommitted defect report is a defect report that gets lost.

@@ -15,6 +15,7 @@ import type { CSSProperties, ReactNode } from 'react';
 
 import { BasketLink } from '@/components/BasketLink';
 import { getBranding, StoreApiError } from '@/lib/api';
+import { checkoutNotice } from '@/lib/licence';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,6 +35,11 @@ export default async function StoreLayout({
     if (error instanceof StoreApiError && error.status === 404) notFound();
     throw error;
   });
+
+  // CG3 arriving in the shell, so it is on every page of the shop rather than only on the one
+  // where the refusal happens. A shopper who fills a basket and is told at the last step is a
+  // shopper we wasted.
+  const notice = checkoutNotice(branding.licence);
 
   const style: BrandStyle = {};
   if (branding.accent) style['--mc-accent'] = branding.accent;
@@ -64,11 +70,23 @@ export default async function StoreLayout({
         </div>
       </header>
 
-      <main className="sf-main">{children}</main>
+      <main className="sf-main">
+        {notice ? (
+          <div className={`sf-banner sf-banner-${notice.tone}`} style={{ marginBottom: '1rem' }}>
+            <strong>{notice.title}</strong> {notice.body}
+          </div>
+        ) : null}
+        {children}
+      </main>
 
       <footer className="sf-footer">
         <div className="sf-footer-inner">
-          {branding.name} · a store on mercatus · tenant <code className="sf-mono">{slug}</code>
+          {/* CC3: the mark is an entitlement in the licence, not a build flag. A merchant who
+              pays for white label loses it when a row changes in the control plane -- there is
+              no second build, no NEXT_PUBLIC_ flag and no per-tenant bundle. */}
+          {branding.name}
+          {branding.licence.poweredByMark ? ' · a store on mercatus' : null} · tenant{' '}
+          <code className="sf-mono">{slug}</code>
         </div>
       </footer>
     </div>

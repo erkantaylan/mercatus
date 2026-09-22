@@ -36,9 +36,11 @@ import {
   findTenantById,
   listOrdersForSubject,
   listProducts,
+  readLicenceState,
 } from '@mercatus/db-store';
 
 import type { StoreDeps } from '../deps.js';
+import { licenceClock, licenceView, storefrontLicence } from '../licence.js';
 import { brandingDto, orderDetailDto, orderDto, productDto } from '../mappers.js';
 import { inTenantTx } from '../tx.js';
 
@@ -64,7 +66,11 @@ export function registerPublicRoutes(app: MercatusServer, deps: StoreDeps): void
       if (!ctx) throw new TenantNotFoundError();
       const row = await findTenantById(deps.db, ctx.tenantId);
       if (!row) throw new TenantNotFoundError();
-      return brandingDto(row);
+      const view = licenceView(
+        await inTenantTx(deps, req, (tx) => readLicenceState(tx)),
+        licenceClock(deps.config),
+      );
+      return brandingDto(row, storefrontLicence(view));
     },
   );
 

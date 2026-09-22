@@ -81,7 +81,14 @@ const storeEnvSchema = z
     BASE_HOST: z.string().min(1).default('localtest.me'),
 
     PLATFORM_URL: z.url().optional(),
+    /**
+     * A DEDICATED instance's own revocable credential, handed out by /installations/register
+     * (CE1). It is also what says "report telemetry": pooled is measured by the control plane
+     * itself, dedicated reports, and the two are never one path (CJ1).
+     */
     INSTANCE_TOKEN: z.string().min(1).optional(),
+    /** The POOLED plane's shared licence-poll credential. Never set on a dedicated instance. */
+    PLATFORM_INTERNAL_TOKEN: z.string().min(16).optional(),
 
     LICENCE_POLL_SECONDS: positiveSecondsSchema.default(10),
     LICENCE_GRACE_SECONDS: positiveSecondsSchema.default(259_200),
@@ -141,6 +148,7 @@ export interface StoreConfig {
   readonly baseHost: string;
   readonly platformUrl: string | undefined;
   readonly instanceToken: string | undefined;
+  readonly internalToken: string | undefined;
   readonly licencePollSeconds: number;
   readonly licenceGraceSeconds: number;
 }
@@ -182,6 +190,7 @@ export function loadStoreConfig(env: EnvSource = process.env): StoreConfig {
     baseHost: value.BASE_HOST,
     platformUrl: value.PLATFORM_URL,
     instanceToken: value.INSTANCE_TOKEN,
+    internalToken: value.PLATFORM_INTERNAL_TOKEN,
     licencePollSeconds: value.LICENCE_POLL_SECONDS,
     licenceGraceSeconds: value.LICENCE_GRACE_SECONDS,
   };

@@ -19,7 +19,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams } from '@tanstack/react-router';
 import type { ReactNode } from 'react';
 
-import { getTenant, setLicenceStatus } from '../api/client.js';
+import { getTenant, setEntitlements, setLicenceStatus } from '../api/client.js';
 import type { LicenceStatus } from '../api/schemas.js';
 import { formatAge, formatInstant } from '../ui/format.js';
 import { Banner, Button, Card, EmptyState, PageHeader, StatusPill } from '../ui/index.js';
@@ -30,14 +30,24 @@ export function TenantDetailPage(): ReactNode {
 
   const tenant = useQuery({ queryKey: ['tenant', slug], queryFn: () => getTenant(slug) });
 
+  const refresh = async (): Promise<void> => {
+    // Both views read the same row, and an operator who flips from the detail page and then
+    // hits Back should not see the old status.
+    await queryClient.invalidateQueries({ queryKey: ['tenant', slug] });
+    await queryClient.invalidateQueries({ queryKey: ['tenants'] });
+  };
+
   const flip = useMutation({
     mutationFn: (status: LicenceStatus) => setLicenceStatus(slug, status),
-    onSuccess: async () => {
-      // Both views read the same row, and an operator who flips from the detail page and then
-      // hits Back should not see the old status.
-      await queryClient.invalidateQueries({ queryKey: ['tenant', slug] });
-      await queryClient.invalidateQueries({ queryKey: ['tenants'] });
-    },
+    onSuccess: refresh,
+  });
+
+  // CC3: a feature is data in the licence, never a build. This button changes a row; the
+  // merchant's storefront follows within one poll interval, with nothing rebuilt.
+  const entitle = useMutation({
+    mutationFn: (next: Record<string, boolean>) =>
+      setEntitlements(slug, (tenant.data?.licence?.status ?? 'active') as LicenceStatus, next),
+    onSuccess: refresh,
   });
 
   if (tenant.isPending) return <EmptyState>Loading...</EmptyState>;
@@ -46,6 +56,7 @@ export function TenantDetailPage(): ReactNode {
   const row = tenant.data;
   const licenceStatus = row.licence?.status ?? 'unknown';
   const entitlements = Object.entries(row.licence?.entitlements ?? {});
+  const whiteLabel = row.licence?.entitlements['whiteLabel'] === true;
 
   return (
     <>
@@ -123,6 +134,30 @@ export function TenantDetailPage(): ReactNode {
             A dedicated instance polls for this, so its box follows within one poll interval. We
             never push to it.
           </p>
+        </Card>
+
+        <Card title="Entitlements">
+          <p className="mc-muted">
+            Features are gated by the licence, never by a build (CC3). There is one image and one
+            code path; what a tenant may do is a row here.
+          </p>
+          <dl className="mc-defs">
+            <dt>“Powered by” mark</dt>
+            <dd data-testid="powered-by-state">{whiteLabel ? 'removed' : 'shown'}</dd>
+          </dl>
+          <div className="mc-row">
+            <Button
+              testId="toggle-white-label"
+              disabled={entitle.isPending || row.licence === null}
+              onClick={() => {
+                entitle.mutate({ ...Object.fromEntries(entitlements), whiteLabel: !whiteLabel });
+              }}
+            >
+              {whiteLabel ? 'Show the mark' : 'Remove the mark (white label)'}
+            </Button>
+            {entitle.isPending ? <span className="mc-muted">saving...</span> : null}
+          </div>
+          {entitle.isError ? <Banner tone="danger">{(entitle.error as Error).message}</Banner> : null}
         </Card>
 
         <Card title="Installation">

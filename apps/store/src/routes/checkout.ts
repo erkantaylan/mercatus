@@ -9,8 +9,11 @@
  * BI2 again: the tenant is the route's and the subject is the token's. The phone in the body is
  * contact information on the order, not an identity -- the subject is what the shopper is.
  *
- * The 402 for a passive licence belongs to the licence gate (CG3) and arrives with task 08. When
- * it does, it goes in front of this handler as a preHandler, not inside it.
+ * `config.licence = 'checkout'` is what puts the licence gate in front of this handler (CG3):
+ * 402 while the tenant is passive, 503 once the control plane has been unreachable past the
+ * grace window, and nothing at all in between. The decision is not inside the handler, so a
+ * second route that takes money cannot forget it -- it declares the same word or it is not
+ * gated, and that is visible in the route definition rather than in a helper somewhere.
  */
 import {
   checkoutBodySchema,
@@ -35,6 +38,7 @@ export function registerCheckoutRoute(app: MercatusServer, deps: StoreDeps): voi
     '/t/:slug/checkout',
     {
       preHandler: requireShopper(),
+      config: { licence: 'checkout' },
       schema: {
         summary: 'Place an order',
         tags: ['public'],
@@ -44,8 +48,10 @@ export function registerCheckoutRoute(app: MercatusServer, deps: StoreDeps): voi
         response: {
           201: checkoutResultSchema,
           401: errorEnvelopeSchema,
+          402: errorEnvelopeSchema,
           404: errorEnvelopeSchema,
           409: errorEnvelopeSchema,
+          503: errorEnvelopeSchema,
         },
       },
     },

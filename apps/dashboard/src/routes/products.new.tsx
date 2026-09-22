@@ -8,6 +8,7 @@ import { createFileRoute, Link, useRouter } from '@tanstack/react-router';
 
 import { ApiError } from '../api/client.js';
 import { ProductForm } from '../components/ProductForm.js';
+import { useLicence, writesRefused } from '../lib/licence.js';
 import { Card, PageHeader } from '../ui/index.js';
 
 export const Route = createFileRoute('/products/new')({ component: NewProductPage });
@@ -16,6 +17,9 @@ function NewProductPage() {
   const { client } = Route.useRouteContext();
   const queryClient = useQueryClient();
   const router = useRouter();
+  // Read-only is OUR outage past the grace window, never a passive licence (CG3). The banner in
+  // the shell says why; this is what stops the merchant filling a form that would 503.
+  const licence = useLicence(client);
 
   const create = useMutation({
     mutationFn: (body: CreateProductBody) => client.createProduct(body),
@@ -32,6 +36,7 @@ function NewProductPage() {
         <ProductForm
           submitLabel="Add product"
           busy={create.isPending}
+          disabled={writesRefused(licence.data)}
           error={
             create.error === null
               ? undefined

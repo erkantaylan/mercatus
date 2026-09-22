@@ -32,9 +32,26 @@ export const brandingSchema = z.object({
   fg: z.string().optional(),
 });
 
+/**
+ * The two licence facts a SHOPPER is allowed to see, and the only two the storefront needs.
+ *
+ * `checkout` is CG3 arriving at the public surface: `blocked_passive` is the merchant's own
+ * state, `blocked_unreachable` is ours, and the storefront says a different sentence for each
+ * because "your shop is closed" and "we are having a bad afternoon" are not the same apology.
+ *
+ * `poweredByMark` is CC3: whether the "a store on mercatus" line appears is an ENTITLEMENT read
+ * out of the licence, never a build flag. A merchant who pays to remove it has it removed by a
+ * row changing in the control plane, with no rebuild and no second image.
+ */
+export const storefrontLicenceSchema = z.object({
+  checkout: z.enum(['open', 'blocked_passive', 'blocked_unreachable']),
+  poweredByMark: z.boolean(),
+});
+
 export const storeBrandingSchema = brandingSchema.extend({
   name: z.string(),
   slug: slugSchema,
+  licence: storefrontLicenceSchema,
 });
 
 export const productSchema = z.object({
@@ -212,6 +229,7 @@ export const loginCallbackQuerySchema = z.object({
 /* ------------------------------------------------------------------- inferred */
 
 export type Branding = z.infer<typeof brandingSchema>;
+export type StorefrontLicence = z.infer<typeof storefrontLicenceSchema>;
 export type StoreBranding = z.infer<typeof storeBrandingSchema>;
 export type Product = z.infer<typeof productSchema>;
 export type ProductList = z.infer<typeof productListSchema>;

@@ -34,6 +34,12 @@ export async function listProducts(
   return { items, total: counted[0]?.total ?? 0 };
 }
 
+/** For the telemetry batch (CE6). One number, no rows, and nothing about a person (CI1). */
+export async function countProducts(tx: StoreTx): Promise<number> {
+  const counted = await tx.select({ total: sql<number>`count(*)::int` }).from(products);
+  return counted[0]?.total ?? 0;
+}
+
 export async function findProductById(tx: StoreTx, id: string): Promise<ProductRow | null> {
   const rows = await tx.select().from(products).where(eq(products.id, id)).limit(1);
   return rows[0] ?? null;

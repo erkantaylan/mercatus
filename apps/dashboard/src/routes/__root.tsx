@@ -6,7 +6,6 @@
  * the same reasoning as the store's auth hook: a decision every screen depends on belongs in the
  * pipeline, not in thirty components.
  */
-import { useQuery } from '@tanstack/react-query';
 import type { QueryClient } from '@tanstack/react-query';
 import { createRootRouteWithContext, Link, Outlet, redirect, useRouter } from '@tanstack/react-router';
 import { useSyncExternalStore } from 'react';
@@ -14,7 +13,7 @@ import { useSyncExternalStore } from 'react';
 import type { StoreClient } from '../api/client.js';
 import type { DashboardAuthAdapter } from '../auth/adapter.js';
 import { session } from '../auth/session.js';
-import { licenceBanner } from '../lib/licence.js';
+import { licenceBanner, useLicence } from '../lib/licence.js';
 import { Banner, Button } from '../ui/index.js';
 
 export interface RouterContext {
@@ -84,13 +83,9 @@ function TopBar({ slug, role }: { readonly slug: string; readonly role: string }
 
 function LicenceNotice() {
   const { client } = Route.useRouteContext();
-  const licence = useQuery({
-    queryKey: ['licence'],
-    queryFn: () => client.getLicence(),
-    // The demo flips a tenant to passive in the platform console and expects the banner within
-    // seconds, so this polls rather than waiting for a navigation.
-    refetchInterval: 10_000,
-  });
+  // The demo flips a tenant to passive in the platform console and expects the banner within
+  // seconds, so this polls rather than waiting for a navigation.
+  const licence = useLicence(client);
   if (!licence.data) return null;
   const banner = licenceBanner(licence.data);
   if (banner === null) return null;

@@ -5,7 +5,14 @@
  * appear on the wire until someone decides it should. Timestamps become ISO strings here and
  * nowhere else.
  */
-import type { Order, OrderDetail, OrderLine, Product, StoreBranding } from '@mercatus/contracts';
+import type {
+  Order,
+  OrderDetail,
+  OrderLine,
+  Product,
+  StoreBranding,
+  StorefrontLicence,
+} from '@mercatus/contracts';
 import type { OrderLineRow, OrderRow, ProductRow, TenantRow } from '@mercatus/db-store';
 
 export function productDto(row: ProductRow): Product {
@@ -48,11 +55,15 @@ export function orderDetailDto(order: OrderRow, lines: readonly OrderLineRow[]):
 }
 
 /** Branding is rendered as CSS custom properties by the storefront; a dedicated store is fully branded (DW). */
-export function brandingDto(row: TenantRow): StoreBranding {
+export function brandingDto(row: TenantRow, licence: StorefrontLicence): StoreBranding {
   const branding = row.branding;
   return {
     name: row.name,
     slug: row.slug,
+    // CG3 and CC3 travel with the branding because the storefront already fetches it once per
+    // page: whether the shop may sell, and whether our mark appears, are both per-tenant facts
+    // that change without a deploy.
+    licence,
     ...(branding.logoUrl === undefined ? {} : { logoUrl: branding.logoUrl }),
     ...(branding.accent === undefined ? {} : { accent: branding.accent }),
     ...(branding.bg === undefined ? {} : { bg: branding.bg }),

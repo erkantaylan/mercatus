@@ -91,6 +91,10 @@ export function registerStaffProductRoutes(app: MercatusServer, deps: StoreDeps)
     '/api/products',
     {
       preHandler: requireStaff(),
+      // CG3: a write is refused only while the control plane has been unreachable past the
+      // grace window. A PASSIVE tenant keeps every one of these -- the dashboard is the page
+      // that fixes a passive licence.
+      config: { licence: 'write' },
       schema: {
         summary: 'Add a product',
         tags: ['staff'],
@@ -99,6 +103,7 @@ export function registerStaffProductRoutes(app: MercatusServer, deps: StoreDeps)
         response: {
           201: productSchema,
           401: errorEnvelopeSchema,
+          503: errorEnvelopeSchema,
           409: errorEnvelopeSchema,
         },
       },
@@ -135,6 +140,10 @@ export function registerStaffProductRoutes(app: MercatusServer, deps: StoreDeps)
     '/api/products/:id',
     {
       preHandler: requireStaff(),
+      // CG3: a write is refused only while the control plane has been unreachable past the
+      // grace window. A PASSIVE tenant keeps every one of these -- the dashboard is the page
+      // that fixes a passive licence.
+      config: { licence: 'write' },
       schema: {
         summary: 'Change a product',
         tags: ['staff'],
@@ -146,6 +155,7 @@ export function registerStaffProductRoutes(app: MercatusServer, deps: StoreDeps)
           200: productSchema,
           400: errorEnvelopeSchema,
           401: errorEnvelopeSchema,
+          503: errorEnvelopeSchema,
           404: errorEnvelopeSchema,
         },
       },
@@ -168,6 +178,10 @@ export function registerStaffProductRoutes(app: MercatusServer, deps: StoreDeps)
     '/api/products/:id',
     {
       preHandler: requireStaff(),
+      // CG3: a write is refused only while the control plane has been unreachable past the
+      // grace window. A PASSIVE tenant keeps every one of these -- the dashboard is the page
+      // that fixes a passive licence.
+      config: { licence: 'write' },
       schema: {
         summary: 'Remove a product',
         tags: ['staff'],
@@ -176,6 +190,7 @@ export function registerStaffProductRoutes(app: MercatusServer, deps: StoreDeps)
         response: {
           200: deleteResultSchema,
           401: errorEnvelopeSchema,
+          503: errorEnvelopeSchema,
           404: errorEnvelopeSchema,
         },
       },

@@ -6,14 +6,32 @@
  * lives in an httpOnly cookie and the bank's HMAC secret lives in this process; neither may be
  * handed to a browser.
  */
+import Link from 'next/link';
+
 import { CheckoutForm } from '@/components/CheckoutForm';
-import { listProducts } from '@/lib/api';
+import { getBranding, listProducts } from '@/lib/api';
+import { checkoutNotice } from '@/lib/licence';
 
 export const dynamic = 'force-dynamic';
 
 export default async function CheckoutPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
-  const { items } = await listProducts(slug);
+  const [{ items }, branding] = await Promise.all([listProducts(slug), getBranding(slug)]);
+
+  // The store API refuses the order anyway (402 or 503) -- this is the same decision, taken from
+  // the same licence, one screen earlier. The gate is the API's; this is only manners.
+  if (checkoutNotice(branding.licence)) {
+    return (
+      <>
+        <div className="sf-page-header">
+          <h1>Checkout</h1>
+        </div>
+        <p className="sf-muted">
+          Your basket is kept. <Link href={`/t/${slug}`}>Keep browsing</Link> and try again later.
+        </p>
+      </>
+    );
+  }
 
   return (
     <>

@@ -7,6 +7,9 @@
  * plane, which must not look to the merchant like being cut off for non-payment.
  */
 import type { LicenceView } from '@mercatus/contracts';
+import { useQuery } from '@tanstack/react-query';
+
+import type { StoreClient } from '../api/client.js';
 
 export interface LicenceBanner {
   readonly tone: 'info' | 'warning' | 'danger';
@@ -45,7 +48,26 @@ export function licenceBanner(view: LicenceView): LicenceBanner | null {
   }
 }
 
-/** True while the store refuses writes -- the forms grey out rather than failing at submit. */
+/**
+ * One query key for the whole app, so the banner in the shell and the greyed-out Save on a form
+ * are the same fact and cannot disagree. The interval is short because the demo flips a tenant
+ * in the platform console and expects the dashboard to notice without a navigation.
+ */
+export function useLicence(client: StoreClient) {
+  return useQuery({
+    queryKey: ['licence'],
+    queryFn: () => client.getLicence(),
+    refetchInterval: 10_000,
+  });
+}
+
+/**
+ * True while the store refuses writes -- the forms grey out rather than failing at submit.
+ *
+ * Note what is NOT here: `passive`. A merchant whose licence lapsed keeps every button in this
+ * dashboard, because the page that fixes a lapsed licence is in it (CG3). Writes stop only when
+ * WE have been unreachable past the grace window, and even then reading never does (CG1).
+ */
 export function writesRefused(view: LicenceView | undefined): boolean {
   return view?.state === 'read_only';
 }

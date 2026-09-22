@@ -7,8 +7,11 @@ import type { MercatusServer, StoreConfig } from '@mercatus/core';
 import { SessionIssuer, createAuthAdapter, createServer } from '@mercatus/core';
 import type { StoreDbHandle } from '@mercatus/db-store';
 
+import type { LicenceAgent } from './agents/licence-poll.js';
+import { startLicenceAgent } from './agents/licence-poll.js';
 import type { StoreDeps } from './deps.js';
 import { openDatabase, readVersion, tenantDirectory } from './deps.js';
+import { registerLicenceGate } from './plugins/licence-gate.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerCheckoutRoute } from './routes/checkout.js';
 import { registerDevLoginRoutes } from './routes/dev-login.js';
@@ -21,6 +24,8 @@ import { registerStaffSettingsRoutes } from './routes/staff-settings.js';
 export interface StoreApp {
   readonly app: MercatusServer;
   readonly deps: StoreDeps;
+  /** The outbound poll loop (CE4). Exposed so a test can drive one tick instead of waiting. */
+  readonly licence: LicenceAgent;
   close(): Promise<void>;
 }
 
@@ -94,6 +99,10 @@ export async function buildStoreApp(config: StoreConfig): Promise<StoreApp> {
     },
   });
 
+  // Before every route: the gate reads `config.licence` off the route it is about to run, so it
+  // has to be registered before the routes declare it (CG3).
+  registerLicenceGate(app, deps);
+
   registerHealthRoutes(app, deps);
   registerPublicRoutes(app, deps);
   registerCheckoutRoute(app, deps);
@@ -103,10 +112,16 @@ export async function buildStoreApp(config: StoreConfig): Promise<StoreApp> {
   registerAuthRoutes(app, deps);
   registerDevLoginRoutes(app, deps);
 
+  // CE4: the data plane PULLS. Started after the routes so a tick can never race a half-built
+  // application, and unref'd inside, so it never holds the process open by itself.
+  const licence = startLicenceAgent(deps, app.log);
+
   return {
     app,
     deps,
+    licence,
     close: async () => {
+      licence.stop();
       await app.close();
       await handle.close();
     },

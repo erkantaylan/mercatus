@@ -35,6 +35,16 @@ const platformEnvSchema = z
     AUTH_ADAPTER: z.enum(['stub', 'oidc']).default('stub'),
     AUTH_STUB_SECRET: z.string().optional(),
 
+    /**
+     * The credential the POOLED data plane polls its licences with (BUILD-PLAN §6.1: "instance
+     * token **or** internal"). It is a SHARED secret, which CE1 forbids for a data plane we do
+     * not operate -- and the pooled plane is one we do, on our own machine, serving every
+     * tenant, so it cannot be per-instance without inventing an installation per tenant for a
+     * box that is already ours. A DEDICATED plane never sees this: it registers and gets its
+     * own revocable instance token.
+     */
+    PLATFORM_INTERNAL_TOKEN: z.string().min(16).optional(),
+
     /** Our own public base. It is what we hand fake-bank as the callback address. */
     PLATFORM_URL: z.url().optional(),
 
@@ -84,6 +94,8 @@ export interface PlatformConfig {
   readonly databaseUrl: string;
   readonly authAdapter: 'stub' | 'oidc';
   readonly authStubSecret: string | undefined;
+  /** Recognised on the licence-poll route only. Absent means the pooled plane cannot poll. */
+  readonly internalToken: string | undefined;
   readonly platformUrl: string;
   readonly fakeBankUrl: string;
   readonly fakeBankHmacSecret: string;
@@ -119,6 +131,7 @@ export function loadPlatformConfig(env: EnvSource = process.env): PlatformConfig
     databaseUrl: value.DATABASE_URL,
     authAdapter: value.AUTH_ADAPTER,
     authStubSecret: value.AUTH_STUB_SECRET,
+    internalToken: value.PLATFORM_INTERNAL_TOKEN,
     platformUrl: value.PLATFORM_URL ?? `http://127.0.0.1:${String(value.PORT)}`,
     fakeBankUrl: value.FAKE_BANK_URL,
     fakeBankHmacSecret: value.FAKE_BANK_HMAC_SECRET,

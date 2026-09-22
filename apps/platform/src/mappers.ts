@@ -79,5 +79,6 @@ export function licencePollDto(tenant: TenantRow, licence: LicenceRow | null): L
     entitlements: licence?.entitlements ?? {},
     validUntil: licence?.validUntil ?? null,
     serverTime: new Date().toISOString(),
+    licenceId: licence?.id ?? null,
   };
 }

@@ -120,3 +120,21 @@ export async function setLicenceStatus(
     body: { status },
   });
 }
+
+/**
+ * The same endpoint, changing what the tenant is ENTITLED to rather than whether they may sell.
+ *
+ * CC3 is the whole reason this exists as a console action: a feature is gated by a row in the
+ * licence, not by a build. Turning `whiteLabel` on removes the "a store on mercatus" mark from
+ * that merchant's storefront within one poll interval, with nothing rebuilt and no second image.
+ */
+export async function setEntitlements(
+  slug: string,
+  status: LicenceStatus,
+  entitlements: Record<string, boolean>,
+): Promise<TenantSummary> {
+  return request(`/tenants/${encodeURIComponent(slug)}/licence`, tenantSummarySchema, {
+    method: 'POST',
+    body: { status, entitlements },
+  });
+}
