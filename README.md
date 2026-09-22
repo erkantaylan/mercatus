@@ -142,6 +142,14 @@ differ architecturally:
 | Tests | **Vitest**, **Testcontainers**, **Playwright** | run locally |
 | Payments | **fake-bank** | ours, run-mode only |
 
+**FI.** Three rows of that table are **not** what was built, and the code is right rather than the
+table. The dashboard and the console are **Vite + React + TanStack Router SPAs**, not TanStack
+Start. The UI is **plain CSS with design tokens** from `packages/ui`, not Fluent UI v9. And there
+is **no generated client**: `packages/clients` was never built, each app has a ~40-line typed fetch
+wrapper that parses with the Zod contracts, and OpenAPI generation stops at the Scalar docs page.
+The table is left as written because it is the design conversation's record;
+`docs/decisions-made-overnight.md` (task 00) has the reasons.
+
 **DF.** Two of those are worth calling out as reversals from earlier thinking. **Identity is bought,
 not built** — once a server we don't control has to verify our tokens, hand-rolling an IdP means
 owning OIDC discovery, JWKS rotation and revocation, and Logto's organizations already model
@@ -156,23 +164,27 @@ needs is "is this campaign live right now", which is a predicate, not a job.
 apps/
   platform       # Fastify — control plane: tenants, licences, telemetry ingest
   store          # Fastify — data plane API. One image, DEPLOYMENT_MODE=pooled|dedicated
-  dashboard      # TanStack Start — merchant dashboard
-  admin          # TanStack Start — platform console
+  dashboard      # Vite + React + TanStack Router — merchant dashboard (SPA)
+  admin          # Vite + React + TanStack Router — platform console (SPA)
   storefront     # Next.js
   fake-bank      # Fastify — run-mode only, never published
 packages/
-  core           # errors, pagination, tenant context, telemetry wiring
+  core           # errors, pagination, tenant context, createServer, telemetry wiring
   contracts      # Zod schemas
   db-platform    # Drizzle schema + migrations
   db-store       #   "
-  clients        # generated from OpenAPI
+  ui             # tokens.css + reset.css. Stylesheets only, no React components
+  identity       # Logto bootstrap and the OIDC login round-trip gate
+  e2e            # Playwright — the three stories, driven in real Chrome
 aspire/
-  AppHost        # C# — the topology, and the trust-boundary document
+  AppHostA       # C# — ours: control plane, identity, bank, pooled plane, the edge
+  AppHostB       # C# — "their server": one tenant, own database, outbound only
 ```
 
-There is no `apps/identity`: identity is a container we configure. `aspire/AppHost` stays C#
-because it is config nobody edits daily, and because the application model is where the
-control-plane / data-plane trust boundary can be asserted in a test.
+There is no `apps/identity`: identity is a container we configure, and `packages/identity` is only
+the code that bootstraps it. The AppHosts stay C# because they are config nobody edits daily, and
+because the application model is where the control-plane / data-plane trust boundary is asserted —
+AppHost B *cannot* reference A's databases, since they are not in its model.
 
 ---
 
@@ -209,12 +221,14 @@ control-plane database — it reaches A only through `AddExternalService`, over
 **`aspire stop` on A destroys A's database with it**, so a rebuilt control plane has never heard
 of that installation. B's install command therefore *checks* its credential on every start and
 re-registers when the control plane refuses it — the dev bootstrap token is re-seeded unspent on
-every fresh platform database, so restarting B after rebuilding A is one command and no hand
-editing. (Until this was fixed the box kept polling with a dead token, got 401 for ever, and
-reported itself healthy the whole time.) An unreachable control plane is *not* a refusal: B keeps
+every fresh platform database, so `aspire stop && aspire run` on B is the whole recovery and
+nothing has to be edited or deleted by hand. (Until this was fixed the box kept polling with a
+dead token, got 401 for ever, and reported itself healthy the whole time.) The catch is that this
+check runs **only at B's start** — a B that is already running when A is rebuilt never recovers;
+see **The demo** below. An unreachable control plane is *not* a refusal: B keeps
 its credential and boots anyway (`CG1`).
 
-**Everything of A's answers on one port**, 8080, through the edge — one hostname per surface,
+**Every page of A's is served on one port**, 8080, through the edge — one hostname per surface,
 all of them `*.localtest.me`, which resolves to loopback with no `/etc/hosts` entry:
 
 | Through the edge, port 8080 | |
@@ -225,6 +239,22 @@ all of them `*.localtest.me`, which resolves to loopback with no `/etc/hosts` en
 | `platform.localtest.me` | the control plane API |
 | `bank.localtest.me` | fake-bank |
 | `api.localtest.me`, and anything unmatched | the pooled store API |
+
+**Be honest about how far that goes: it is true of the HTML, and not of everything the page then
+does.** Two known leaks off the edge, both fine on a laptop and both wrong the moment only 8080 is
+exposed:
+
+- **Checkout leaves the edge.** fake-bank builds its hosted payment URL from the request it
+  received, and the storefront calls it at `FAKE_BANK_URL=http://127.0.0.1:4004` — so a shopper
+  who bought at `shop.localtest.me:8080` is sent to `127.0.0.1:4004` to pay. The
+  `bank.localtest.me` route exists; this flow does not use it.
+- **The two SPAs are served through the edge and call the APIs direct**, at
+  `VITE_STORE_API_URL=http://127.0.0.1:4002` and `VITE_PLATFORM_URL=http://127.0.0.1:4001` (both
+  set in `aspire/AppHostA/apphost.cs`). Nothing complains, because CORS is `origin: true` on
+  every service — see `packages/core/src/http/server.ts`.
+
+Pointing those three variables at the edge hostnames, and then narrowing CORS to them, is one
+change and is the first item in [`docs/MORNING.md`](./docs/MORNING.md) §6.
 
 The direct ports are still there, and are what the e2e suite drives:
 
@@ -255,7 +285,42 @@ every run regardless, which costs a container and a bootstrap step.
 The dedicated store keeps serving and keeps taking orders; only the payment waits, because
 payments are ours and never run on a customer's server (`CE2`). After
 `LICENCE_GRACE_SECONDS` (60 here, 72 hours by default) checkout degrades to **503** and browsing
-stays **200**. Bring A back and it returns to `active/healthy` within one poll.
+stays **200**.
+
+**Recovering from that needs B restarted as well as A**, and this is the one part of the demo that
+is not the obvious command:
+
+```bash
+cd aspire/AppHostA && aspire run --detach --non-interactive --nologo --format Json
+cd ../AppHostB && aspire stop --non-interactive --nologo
+aspire run --detach --non-interactive --nologo --format Json
+```
+
+Stopping A destroyed A's Postgres, so the rebuilt control plane has never heard of that
+installation: `GET /installations` answers `total: 0` and B's stored credential gets a **404**. B
+keeps polling — `lastCheckedAt` advances — but never succeeds again, because re-registration
+happens in B's **install command, at start** (`apps/store/src/provision.ts`). A restarted B
+re-registers, and the store is back to `active/healthy` with `checkout: open` on the next poll.
+Giving the poll agent the same re-register branch would make "bring A back" the whole recovery;
+it is the first item in [`docs/MORNING.md`](./docs/MORNING.md) §6.
+
+If what you want is the *catches-up* story rather than the destroyed-database one, kill the
+platform **process** instead of the AppHost (`ss -ltnp | grep :4001`, then `kill -TERM`). DCP does
+not restart it, A's database survives, and B recovers on its own within one poll. That is what
+`packages/e2e/tests/03-dedicated-outage.spec.ts` does.
+
+**The checks.**
+
+```bash
+pnpm -r test                    # 244 tests, 0 skipped, no stack needed
+pnpm turbo run typecheck lint   # 26 tasks
+pnpm test:e2e                   # 16 Playwright tests in real Chrome -- needs both AppHosts up
+```
+
+`packages/e2e` declares no `test` script, so `pnpm -r test` covers **13 of the 14** workspace
+projects and never opens a browser: the storefront, the dashboard, the console, the edge and the
+outage scenario are exercised by `pnpm test:e2e` alone, by hand, against a live stack. It refuses
+to run against a stack that is down and names the `aspire run` that is missing.
 
 ---
 
@@ -263,6 +328,9 @@ stays **200**. Bring A back and it returns to `active/healthy` within one poll.
 
 | | |
 |---|---|
+| [`docs/MORNING.md`](./docs/MORNING.md) | **Start here.** What works and what does not, as of the end of the overnight build, with the commands and the priorities |
+| [`docs/OPEN-DEFECTS.md`](./docs/OPEN-DEFECTS.md) | The RLS verifier's findings, F1–F6, with the fix recorded under each |
+| [`docs/decisions-made-overnight.md`](./docs/decisions-made-overnight.md) | Every decision the design docs did not make, one bullet and one reason each |
 | [`docs/architecture.md`](./docs/architecture.md) | Service graphs — context, topology, tiers, token flow, buy-a-store, provisioning, degradation, data model, what `aspire run` starts |
 | [`docs/dos-and-donts.md`](./docs/dos-and-donts.md) | 32 rules with the failure behind each one. Start here before writing code |
 | [`docs/port-analysis.md`](./docs/port-analysis.md) | Archived. How this started — analysing a .NET rewrite. Kept for its stack reasoning and stable labels |

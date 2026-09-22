@@ -726,3 +726,25 @@ Decisions the design docs did not make, taken while fixing the acceptance findin
   database, left running on `0.0.0.0:55432` since 05:33 and recorded twice as "left as found".
   Nothing needs it; lessons/07b says how to start another.
 
+
+---
+
+## Task 13 — the morning handover
+
+Decisions taken while writing `docs/MORNING.md` and reconciling the README with what runs.
+
+- **The README's Stack table is left wrong, with a note beside it.** Three rows never matched the
+  build — TanStack Start, Fluent UI v9, and a generated client. Rewriting the table would edit the
+  design conversation's own record, which the standing rules forbid; a new note (**FI**) says which
+  rows are wrong and points here for the reasons.
+- **The README's Layout block was corrected in place**, unlike the table. It named
+  `packages/clients` and `aspire/AppHost`, neither of which exists on disk, and omitted `ui`,
+  `identity`, `e2e` and the two AppHosts. A directory listing that names directories nobody can
+  `cd` into is a factual error rather than a record of a decision.
+- **The demo's broken last step was documented, not fixed.** Task 13 writes no feature code, so
+  the README now carries the sequence that works (restart B as well as A) and the one-line agent
+  change that would make the original sequence true is the first item in `MORNING.md` §6. A
+  README that describes a command nobody can run is worse than one that describes an extra step.
+- **`MORNING.md`'s paragraph labels continue the README's series at `EV`.** The README's own run
+  ends at `EU`, and the convention is one counter that only ever increases, so `EV`–`FH` are new
+  labels rather than a second sequence that would collide on the next reference.
