@@ -5,7 +5,7 @@
  * naming the `aspire run` that was not issued. AppHost B is OPTIONAL -- its spec skips itself when
  * the dedicated instance is not there -- so B's absence is reported and not fatal.
  */
-import { ENDPOINTS, probe } from './stack.js';
+import { DEDICATED, ENDPOINTS, probe } from './stack.js';
 
 interface Requirement {
   readonly name: string;
@@ -23,11 +23,22 @@ const REQUIRED: readonly Requirement[] = [
   { name: 'admin (platform console)', url: ENDPOINTS.admin, path: '/' },
 ];
 
-const OPTIONAL: readonly Requirement[] = [
-  { name: 'store-zenith (dedicated)', url: ENDPOINTS.storeDedicated, path: '/health' },
-  { name: 'web-storefront-tenant-zenith', url: ENDPOINTS.storefrontDedicated, path: '/t/zenith' },
-  { name: 'web-dashboard-tenant-zenith', url: ENDPOINTS.dashboardDedicated, path: '/' },
-];
+/**
+ * Whatever dedicated instances published an address book this run, named after their own tenant.
+ *
+ * Nothing here is a list of tenants we expect. One AppHost B serves any tenant by
+ * MERCATUS_TENANT_SLUG, so the question "is the dedicated instance up" became "which ones are",
+ * and the answer is read off `.stack/` rather than written down (v2.0.0 phase 2).
+ */
+const OPTIONAL: readonly Requirement[] = Object.values(DEDICATED).flatMap((instance) => [
+  { name: `api-store-tenant-${instance.slug}`, url: instance.store, path: '/health' },
+  {
+    name: `web-storefront-tenant-${instance.slug}`,
+    url: instance.storefront,
+    path: `/t/${instance.slug}`,
+  },
+  { name: `web-dashboard-tenant-${instance.slug}`, url: instance.dashboard, path: '/' },
+]);
 
 const WAIT_MS = 90_000;
 const INTERVAL_MS = 2000;
@@ -84,12 +95,22 @@ export default async function globalSetup(): Promise<void> {
     );
   }
 
-  // An address B never published is B being down, not a probe worth making.
+  // An address no instance published is that instance being down, not a probe worth making.
   const optional = await Promise.all(OPTIONAL.map((r) => (r.url === '' ? { ok: false, status: null } : probe(r.url, r.path))));
   const down = OPTIONAL.filter((_, index) => !optional[index]?.ok).map((r) => r.name);
-  process.stdout.write(
-    down.length === 0
-      ? '\nAppHost A and AppHost B are both up. The dedicated-instance spec will run.\n\n'
-      : `\nAppHost A is up. AppHost B is NOT (${down.join(', ')}) -- its spec will skip.\n\n`,
-  );
+  const slugs = Object.keys(DEDICATED);
+  if (slugs.length === 0) {
+    process.stdout.write(
+      '\nAppHost A is up. No dedicated instance published an address book ' +
+        '(.stack/apphost-<slug>.json) -- the dedicated specs will skip.\n\n',
+    );
+  } else {
+    process.stdout.write(
+      down.length === 0
+        ? `\nAppHost A is up, and so is every dedicated instance (${slugs.join(', ')}). ` +
+            'The dedicated-instance specs will run.\n\n'
+        : `\nAppHost A is up. Dedicated instances found: ${slugs.join(', ')}, but not answering: ` +
+            `${down.join(', ')} -- those specs will skip.\n\n`,
+    );
+  }
 }

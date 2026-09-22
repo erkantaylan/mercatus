@@ -830,3 +830,56 @@ Decisions taken while putting the dedicated instance on Logto ahead of any regis
   audit requirement on installations, and a soft-delete would need `listRegisteredInstallations`,
   the instance-token lookup and the heartbeat all taught to filter — three places to get wrong for
   a property nothing asks for yet.
+
+## v2.0.0 phase 2 — one AppHost B, any tenant
+
+- **`MERCATUS_TENANT_SLUG` defaults to `zenith` rather than being required.** A required variable
+  would break a bare `aspire run`, the README, `docs/MORNING.md` and every muscle memory in the
+  repo for no property anyone asked for. The default is the everyday loop; naming a slug is what a
+  second instance does.
+- **The slug is validated (`^[a-z][a-z0-9-]{1,38}$`) and the AppHost throws on a bad one.** It
+  becomes an Aspire resource name, a Docker container name and a file path under `.instance/` and
+  `.identity/`. A validation failure at model-build time is a sentence; `../etc/passwd` as a tenant
+  is not.
+- **The tenant's display NAME was deleted from AppHost B instead of parameterised.** "Zenith
+  Tools" is not derivable from "zenith", and it did not need to be: the control plane owns the
+  tenant row. `registerInstallationResult` and the new report result carry `tenantName`, the
+  install command mirrors it (`BV1`), and `TENANT_NAME` survives only as an override nothing sets.
+  One fewer per-tenant literal, and the one that could never have been derived.
+- **The dev bootstrap token is derived, not configured:**
+  `mercatus-dev-bootstrap-token-for-{slug}-001` — which is exactly what `seed-dedicated.ts`
+  already seeds for zenith. `MERCATUS_BOOTSTRAP_TOKEN` overrides it, and that is what an operator
+  pasting a real minted token uses.
+- **`.stack/apphost-b.json` became `.stack/apphost-<slug>.json`, and the endpoint keys inside it
+  lost their `_dedicated` suffix.** The tenant is named ONCE, as a top-level `tenant` field, so N
+  instances can publish side by side without every key carrying a slug and every reader parsing it
+  back out. A manifest with no `tenant` is the control plane's half; the e2e helpers glob the
+  directory rather than reading two known filenames.
+- **The three Aspire CLI ports in `apphost.run.json` are NOT derived from the slug.** `aspire run
+  --isolated` already randomises exactly those and isolates user secrets with them. Hand-rolling a
+  port hash would be a second mechanism for something the tool does, and it would still have to be
+  written into a static JSON file that cannot read an environment variable. Checked once on its
+  own: the dashboard moved from `15240` to `41171` and `aspire stop` still reaped it. Two at once
+  is phase 3's.
+- **`POST /installations/report` is a new endpoint rather than fields on the heartbeat.** The
+  heartbeat is telemetry (`CE3`, `CI1`) and fires every few seconds; the address changes at most
+  once per boot and its acceptance has to run the host-pin check and reconcile the issuer. Two
+  different operations with two different frequencies and two different failure meanings.
+- **A reported URL is normalised once, at the door, and stored normalised.** `origin + pathname`,
+  trailing slashes stripped. Userinfo, a query and a fragment are REFUSED rather than stripped: a
+  store's public base carries none of them, and refusing produces a line in the log instead of a
+  URL the caller did not ask for. Logto matches `redirect_uri` as a string, so validating one
+  spelling and registering another is the lessons/14 failure by a different road.
+- **The shared dashboard and storefront clients get ownership arithmetic; the per-installation
+  client gets an authoritative write.** A URI another live installation reports is never removed,
+  which is why both provision and deprovision take every OTHER installation's addresses. The
+  instance's own application has exactly one owner, so its list is replaced rather than unioned --
+  a union leaked one dead URI per restart, and ports are orchestrator-assigned now.
+- **`addRedirectUris` / `removeRedirectUris` were deleted in favour of one
+  `reconcileRedirectUris`.** Add and remove are two halves of one fact for a box that moved;
+  issuing them as two read-modify-writes leaves a window holding both and is one PATCH too many.
+- **A failure after the instance's client exists is a warning, not `oidc: null`.** `oidc: null`
+  means "identity is not wired up" and the instance keeps whatever it had. Using it for "the
+  shared dashboard's PATCH returned 500" tells a first-time box it has no issuer client while the
+  operator sees a clean registration -- and the application id was never written down, so the
+  client secret could never be revoked. The id is now written the moment the client exists.

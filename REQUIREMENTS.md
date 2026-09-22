@@ -65,10 +65,15 @@ because AppHost A registered the dedicated store's address as an OIDC redirect U
 store existed; the instance now reports its own address at registration and is host-pinned to the
 hostname the installation was minted for.
 
-Where the dynamic ones landed is written to `.stack/apphost-a.json` and `.stack/apphost-b.json` on
-every run, which is what the e2e suite reads instead of a table.
+Where the dynamic ones landed is written to `.stack/apphost-a.json` and, for each dedicated
+instance, `.stack/apphost-<slug>.json` on every run -- which is what the e2e suite globs instead
+of reading a table. Since **v2.0.0 phase 2** there is one AppHost B for any tenant
+(`MERCATUS_TENANT_SLUG`), so the file is named after the tenant rather than after the AppHost.
 
 The two Aspire dashboards stay on `15230` (A) and `15240` (B), set in each `apphost.run.json`.
+A SECOND AppHost B at the same time takes `aspire run --isolated`, which randomises those three
+CLI ports; nothing else collides, because every resource port, container name and path below is
+keyed by the slug.
 
 ---
 

@@ -2,7 +2,8 @@
 #:package Aspire.Hosting.PostgreSQL@13.5.4
 #:property AspireUseCliBundle=true
 
-// AppHost B -- "Zenith's VPS". A DEDICATED data plane, on a machine we do not own (BUILD-PLAN 8.4).
+// AppHost B -- a DEDICATED data plane, on a machine we do not own (BUILD-PLAN 8.4). One tenant,
+// named by MERCATUS_TENANT_SLUG; "Zenith's VPS" is what the default slug makes it.
 //
 // This is the other half of the trust-boundary document, and the half that makes it a property of
 // the tool rather than a convention (CO3). Read what is NOT in this file: there is no
@@ -19,11 +20,16 @@
 // Run it with AppHost A already up:
 //
 //   cd aspire/AppHostA && aspire run --detach --non-interactive --nologo --format Json
-//   cd aspire/AppHostB && aspire run --detach --non-interactive --nologo --format Json
+//   cd aspire/AppHostB && MERCATUS_TENANT_SLUG=zenith aspire run --detach --non-interactive --nologo --format Json
 //
 // and stop each with `aspire stop` from its own directory. Two AppHosts means two dashboards,
 // which is the honest arrangement: the control plane knows about this box exactly what this box
 // chose to tell it (EQ, CL1).
+//
+// ONE FILE, ANY TENANT (v2.0.0 phase 2). There is no AppHost C and there never will be: a second
+// dedicated tenant is this same model with a different MERCATUS_TENANT_SLUG. A second one running
+// AT THE SAME TIME adds `--isolated`, which is the CLI's own answer to two AppHosts wanting one
+// dashboard port -- see the note beside task-stack-manifest at the bottom of this file.
 
 var builder = DistributedApplication.CreateBuilder(args);
 
@@ -82,17 +88,52 @@ var identity = builder.AddExternalService("ext-identity", IdentityUrl);
 const string StoreOwner = "mercatus_owner:mercatus_owner_dev";
 const string StoreApp = "mercatus_app:mercatus_app_dev";
 const string FakeBankHmacSecret = "mercatus-dev-fake-bank-hmac-secret-0123456789";
-const string AuthStubSecret = "mercatus-dev-zenith-auth-stub-secret-0123456789";
-const string SessionSecret = "mercatus-dev-zenith-session-secret-0123456789";
 
-// The one-time bootstrap token, as seeded by `pnpm --filter @mercatus/db-platform seed:dedicated`
-// in AppHost A. In the product an operator copies this out of the platform console once
-// (POST /installations) and pastes it into the install command; the seed exists so the dev loop
-// has no human in it. It is spent on first use and is worthless afterwards.
-const string BootstrapToken = "mercatus-dev-bootstrap-token-for-zenith-001";
+// ---------------------------------------------------------------------------------------------
+// WHICH TENANT THIS BOX SERVES -- the only thing that distinguishes one dedicated instance from
+// another (v2.0.0 phase 2).
+//
+//   MERCATUS_TENANT_SLUG=orion aspire run --detach --non-interactive --nologo --format Json
+//
+// EVERYTHING per-tenant below is derived from this one string: the resource names, the Postgres
+// container and its database, the credential file, the identity cache, the storefront's build
+// directory, the dev bootstrap token and the half of the address book this box publishes. There
+// is no second copy of this file to keep in step, and adding a tenant is still zero edits to
+// AppHost A.
+//
+// The slug is VALIDATED, not trusted. It becomes a resource name, a container name and a file
+// path; `../etc/passwd` is not a tenant. `zenith` is the default so the everyday loop, the README
+// and the e2e suite keep working with a bare `aspire run`.
+// ---------------------------------------------------------------------------------------------
+string Env(string name, string fallback) =>
+    Environment.GetEnvironmentVariable(name) is { Length: > 0 } value ? value : fallback;
 
-const string TenantSlug = "zenith";
-const string TenantName = "Zenith Tools";
+var TenantSlug = Env("MERCATUS_TENANT_SLUG", "zenith");
+if (!System.Text.RegularExpressions.Regex.IsMatch(TenantSlug, "^[a-z][a-z0-9-]{1,38}$"))
+{
+    throw new InvalidOperationException(
+        $"MERCATUS_TENANT_SLUG '{TenantSlug}' is not a slug: lower-case, starting with a letter, " +
+        "letters/digits/hyphens only, 2-39 characters. It becomes a resource name, a container " +
+        "name and a file path, so it is checked here rather than trusted.");
+}
+
+// NOT A's, and now not a literal either: per-instance by construction (CE1). A second dedicated
+// tenant on this machine mints its own stub key and its own session key, and neither box can read
+// the other's cookies.
+var AuthStubSecret = $"mercatus-dev-{TenantSlug}-auth-stub-secret-0123456789";
+var SessionSecret = $"mercatus-dev-{TenantSlug}-session-secret-0123456789";
+
+// The one-time bootstrap token. In the product an operator mints it once in the platform console
+// (`POST /installations {tenantSlug, expectedHost}`) and pastes it into the install command, which
+// is what MERCATUS_BOOTSTRAP_TOKEN is for. The default is the literal
+// `pnpm --filter @mercatus/db-platform seed:dedicated` seeds in AppHost A, so the dev loop has no
+// human in it. It is spent on first use and is worthless afterwards.
+var BootstrapToken = Env("MERCATUS_BOOTSTRAP_TOKEN", $"mercatus-dev-bootstrap-token-for-{TenantSlug}-001");
+
+// NO TENANT NAME HERE. The control plane owns the tenant's display name and says what it is in
+// the registration answer; the install command mirrors that (BV1). A name in this file would be
+// a second copy of a fact we already ask for, and the one string that could not be derived from
+// the slug.
 
 // NOTHING IN THIS FILE IS A FIXED PORT. Until v2.0.0 the store API was: AppHost A had to register
 // it as an OIDC redirect target before this AppHost had ever run, so both models read
@@ -106,7 +147,7 @@ var repoRoot = "../..";
 // The credential the install command writes and the store reads (CE1). Both resources run with
 // their working directory inside apps/store -- `pnpm --filter` runs a script with cwd = the
 // package directory -- so one relative path serves both and lands at the repo root.
-var instanceTokenPath = "../../.instance/zenith.json";
+var instanceTokenPath = $"../../.instance/{TenantSlug}.json";
 
 // The identity cache: this instance's OIDC client, the issuer's key set, and the one organization
 // that is this tenant. WRITTEN BY THE INSTALL COMMAND from what registration answered -- AppHost A
@@ -114,7 +155,7 @@ var instanceTokenPath = "../../.instance/zenith.json";
 //
 // The store's adapter reads this file ONCE, in its constructor, and never again. That is why the
 // store waits for the install command to FINISH and not merely to start.
-var identityCachePath = "../../.identity/store-zenith.json";
+var identityCachePath = $"../../.identity/store-{TenantSlug}.json";
 
 var authAdapter = Environment.GetEnvironmentVariable("MERCATUS_AUTH_ADAPTER") is "oidc" ? "oidc" : "stub";
 
@@ -126,8 +167,8 @@ var pgPassword = builder.AddParameter("pg-password", "mercatusdevpassword", secr
 // the pooled plane runs (CC2) -- N=1 is a configuration, not a second product. Default container
 // lifetime, never persistent (#818).
 // ---------------------------------------------------------------------------------------------
-var pgZenith = builder.AddPostgres("pg-tenant-zenith", pgUser, pgPassword);
-var dbZenith = pgZenith.AddDatabase("db-tenant-zenith", "store");
+var pgTenant = builder.AddPostgres($"pg-tenant-{TenantSlug}", pgUser, pgPassword);
+var dbTenant = pgTenant.AddDatabase($"db-tenant-{TenantSlug}", "store");
 
 ReferenceExpression Url(IResourceBuilder<PostgresServerResource> server, string credentials, string database) =>
     ReferenceExpression.Create(
@@ -137,12 +178,12 @@ ReferenceExpression SuperuserUrl(IResourceBuilder<PostgresServerResource> server
     ReferenceExpression.Create(
         $"postgres://postgres:{pgPassword.Resource}@{server.Resource.PrimaryEndpoint.Property(EndpointProperty.HostAndPort)}/{database}");
 
-var migrate = builder.AddExecutable("task-migrate-tenant-zenith", "pnpm", repoRoot,
+var migrate = builder.AddExecutable($"task-migrate-tenant-{TenantSlug}", "pnpm", repoRoot,
         "--filter", "@mercatus/db-store", "migrate")
-    .WithEnvironment("DATABASE_SUPERUSER_URL", SuperuserUrl(pgZenith, "store"))
-    .WithEnvironment("DATABASE_ADMIN_URL", Url(pgZenith, StoreOwner, "store"))
-    .WithReference(dbZenith)
-    .WaitFor(dbZenith);
+    .WithEnvironment("DATABASE_SUPERUSER_URL", SuperuserUrl(pgTenant, "store"))
+    .WithEnvironment("DATABASE_ADMIN_URL", Url(pgTenant, StoreOwner, "store"))
+    .WithReference(dbTenant)
+    .WaitFor(dbTenant);
 
 // ---------------------------------------------------------------------------------------------
 // The install command (architecture.md 7). Registers with the bootstrap token, writes the
@@ -152,14 +193,13 @@ var migrate = builder.AddExecutable("task-migrate-tenant-zenith", "pnpm", repoRo
 // It needs the control plane to be reachable exactly once, ever. After that the credential file
 // is on the box and this step is a no-op, which is what makes it idempotent and resumable (CK2).
 // ---------------------------------------------------------------------------------------------
-var provision = builder.AddExecutable("task-provision-tenant-zenith", "pnpm", repoRoot,
+var provision = builder.AddExecutable($"task-provision-tenant-{TenantSlug}", "pnpm", repoRoot,
         "--filter", "@mercatus/store", "provision")
     .WithEnvironment("PLATFORM_URL", ControlPlaneUrl)
     .WithEnvironment("INSTANCE_BOOTSTRAP_TOKEN", BootstrapToken)
     .WithEnvironment("INSTANCE_TOKEN_PATH", instanceTokenPath)
-    .WithEnvironment("DATABASE_ADMIN_URL", Url(pgZenith, StoreOwner, "store"))
+    .WithEnvironment("DATABASE_ADMIN_URL", Url(pgTenant, StoreOwner, "store"))
     .WithEnvironment("TENANT_SLUG", TenantSlug)
-    .WithEnvironment("TENANT_NAME", TenantName)
     // Run mode only. A published topology must never invent stock (the sibling of CR1's gate).
     .WithEnvironment("DEV_SEED_CATALOG", builder.ExecutionContext.IsRunMode ? "1" : "0")
     .WithEnvironment("IDENTITY_CACHE_PATH", identityCachePath)
@@ -181,7 +221,7 @@ IResourceBuilder<ExecutableResource> Node(string name, string appDirectory, int?
         .WithEnvironment("NODE_ENV", "development")
         .WithOtlpExporter();
 
-var store = Node("api-store-tenant-zenith", "store", null,
+var store = Node($"api-store-tenant-{TenantSlug}", "store", null,
         // tsx first, so the second preload can BE TypeScript; telemetry second, so the SDK
         // patches http and pg before the application graph is built.
         "--import", "tsx",
@@ -190,7 +230,7 @@ var store = Node("api-store-tenant-zenith", "store", null,
     .WithEnvironment("HOST", "0.0.0.0")
     .WithEnvironment("DEPLOYMENT_MODE", "dedicated")
     .WithEnvironment("TENANT_SLUG", TenantSlug)
-    .WithEnvironment("DATABASE_URL", Url(pgZenith, StoreApp, "store"))
+    .WithEnvironment("DATABASE_URL", Url(pgTenant, StoreApp, "store"))
     .WithEnvironment("AUTH_ADAPTER", authAdapter)
     .WithEnvironment("AUTH_STUB_SECRET", AuthStubSecret)
     .WithEnvironment("OIDC_ISSUER", $"{IdentityUrl}/oidc")
@@ -212,11 +252,11 @@ var store = Node("api-store-tenant-zenith", "store", null,
     // window is only demonstrable if you can sit through it.
     .WithEnvironment("LICENCE_GRACE_SECONDS", "60")
     .WithHttpHealthCheck("/health")
-    .WithReference(dbZenith)
+    .WithReference(dbTenant)
     .WithReference(controlPlane)
     .WithReference(fakeBank)
     .WithReference(identity)
-    .WaitFor(dbZenith)
+    .WaitFor(dbTenant)
     .WaitForCompletion(provision);
 
 // Ships with the instance (DK): the same Next.js app as the pooled storefront, with TENANT_SLUG
@@ -228,7 +268,7 @@ var storeUrl = store.GetEndpoint("http");
 // wait on an endpoint it owns.
 store.WithEnvironment("STORE_PUBLIC_URL", storeUrl);
 
-var storefront = Node("web-storefront-tenant-zenith", "storefront", null,
+var storefront = Node($"web-storefront-tenant-{TenantSlug}", "storefront", null,
         "node_modules/next/dist/bin/next", "dev")
     .WithEnvironment("TENANT_SLUG", TenantSlug)
     .WithEnvironment("STORE_API_URL", storeUrl)
@@ -237,7 +277,7 @@ var storefront = Node("web-storefront-tenant-zenith", "storefront", null,
     .WithEnvironment("FAKE_BANK_HMAC_SECRET", FakeBankHmacSecret)
     // AppHost A runs the same package out of the same directory. Without a distDir of its own,
     // whichever `next dev` starts second writes over the first one's build output.
-    .WithEnvironment("NEXT_DIST_DIR", ".next-zenith")
+    .WithEnvironment("NEXT_DIST_DIR", $".next-{TenantSlug}")
     .WithReference(fakeBank)
     .WithHttpHealthCheck($"/t/{TenantSlug}")
     .WaitFor(store);
@@ -245,7 +285,7 @@ var storefront = Node("web-storefront-tenant-zenith", "storefront", null,
 // The merchant's own dashboard, on their own server (DK). It is the same build as the pooled
 // one with a different VITE_STORE_API_URL, and it is why "the control plane is down" does not
 // mean "the merchant cannot see their orders".
-var dashboard = Node("web-dashboard-tenant-zenith", "dashboard", null,
+var dashboard = Node($"web-dashboard-tenant-{TenantSlug}", "dashboard", null,
         "node_modules/vite/bin/vite.js", "--host", "127.0.0.1")
     .WithEnvironment("VITE_STORE_API_URL", storeUrl)
     .WithHttpHealthCheck("/")
@@ -273,12 +313,27 @@ provision
     .WithEnvironment("STOREFRONT_PUBLIC_URL", storefrontUrl)
     .WithEnvironment("DASHBOARD_PUBLIC_URL", dashboard.GetEndpoint("http"));
 
-// This box's half of the address book (see AppHostA for the other). The e2e suite merges the two
-// and skips B's spec when this file is absent, which is the same signal "B is not up" always was.
+// ---------------------------------------------------------------------------------------------
+// This box's half of the address book (see AppHostA for the other).
+//
+// ONE FILE PER INSTANCE, named after the tenant -- `.stack/apphost-{slug}.json` -- because there
+// is no longer "the" dedicated instance to call `apphost-b.json`. The keys inside it are
+// unqualified (`store`, `storefront`, `dashboard`) and the tenant is named ONCE, at the top of
+// the file: the reader groups by instance rather than parsing a slug back out of a key it also
+// has to camel-case. `packages/e2e/tests/helpers/stack.ts` globs these and skips the specs of an
+// instance that is not up, which is the same signal "B is not up" always was.
+//
+// TWO OF THESE AT ONCE (phase 3) is `aspire run --isolated` for the second one: the AppHost's own
+// dashboard, OTLP and resource-service ports are the fixed numbers in `apphost.run.json`, and
+// `--isolated` is the CLI's own answer to wanting them randomised. Nothing else collides --
+// every resource port here is Aspire-assigned, the container names, the paths and this manifest
+// are all keyed by the slug.
+// ---------------------------------------------------------------------------------------------
 builder.AddExecutable("task-stack-manifest", "node", repoRoot, "aspire/scripts/write-stack-manifest.mjs")
-    .WithEnvironment("MERCATUS_MANIFEST_OUT", ".stack/apphost-b.json")
-    .WithEnvironment("MERCATUS_EP_STORE_DEDICATED", storeUrl)
-    .WithEnvironment("MERCATUS_EP_STOREFRONT_DEDICATED", storefrontUrl)
-    .WithEnvironment("MERCATUS_EP_DASHBOARD_DEDICATED", dashboard.GetEndpoint("http"));
+    .WithEnvironment("MERCATUS_MANIFEST_OUT", $".stack/apphost-{TenantSlug}.json")
+    .WithEnvironment("MERCATUS_MANIFEST_TENANT", TenantSlug)
+    .WithEnvironment("MERCATUS_EP_STORE", storeUrl)
+    .WithEnvironment("MERCATUS_EP_STOREFRONT", storefrontUrl)
+    .WithEnvironment("MERCATUS_EP_DASHBOARD", dashboard.GetEndpoint("http"));
 
 builder.Build().Run();

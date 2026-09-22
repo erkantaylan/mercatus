@@ -40,8 +40,8 @@ for u in http://platform.localtest.me:$E/health \
          http://shop.localtest.me:$E/t/acme \
          http://dash.localtest.me:$E/ \
          http://console.localtest.me:$E/ \
-         "$(jq -r .endpoints.store_dedicated .stack/apphost-b.json)/health" \
-         "$(jq -r .endpoints.storefront_dedicated .stack/apphost-b.json)/t/zenith"; do
+         "$(jq -r .endpoints.store .stack/apphost-zenith.json)/health" \
+         "$(jq -r .endpoints.storefront .stack/apphost-zenith.json)/t/zenith"; do
   printf '%s -> %s\n' "$u" "$(curl -s -o /dev/null -m 4 -w '%{http_code}' "$u")"
 done
 ```

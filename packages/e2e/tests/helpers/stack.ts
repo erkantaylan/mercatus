@@ -8,34 +8,49 @@
  * Addresses are READ, not declared. Every service port is Aspire-assigned now, so the table that
  * used to live here -- BUILD-PLAN §8.1 restated once -- would name ports nothing is listening on.
  * Each AppHost writes its half of the address book to `.stack/` as it comes up
- * (aspire/scripts/write-stack-manifest.mjs) and this merges the two. B's half is optional, exactly
- * as B itself always was: its absence is what makes the dedicated-instance spec skip.
+ * (aspire/scripts/write-stack-manifest.mjs) and this reads WHATEVER IS THERE.
+ *
+ * Whatever is there, by glob, because since v2.0.0 there is no longer "the" dedicated instance to
+ * call `apphost-b.json`. One AppHost B serves any tenant by MERCATUS_TENANT_SLUG and writes
+ * `.stack/apphost-{slug}.json`, naming its tenant inside the file. So: files with a `tenant` are
+ * instances, keyed by slug; files without one are the control plane and are merged flat. An
+ * instance that is not running has no file, which is what makes its specs skip -- exactly as B's
+ * absence always did.
  */
 import { execFileSync, spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, readlinkSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const STACK_DIR = fileURLToPath(new URL('../../../../.stack/', import.meta.url));
 
 interface Manifest {
   readonly writtenAt: string;
+  /** Present only on a dedicated instance's half. Its absence is what makes a file the control plane's. */
+  readonly tenant?: string;
   readonly endpoints: Readonly<Record<string, string>>;
 }
 
 /**
- * One AppHost's half of the address book, or `{}` when it has not written one.
+ * Every `.stack/apphost-*.json` on disk.
  *
- * A missing file is a stack that is down, which global-setup reports in a sentence. A malformed
- * one is a bug worth seeing, so it is not swallowed.
+ * A missing directory is a stack that is down, which global-setup reports in a sentence. A
+ * malformed file is a bug worth seeing, so it is not swallowed.
  */
-function readManifest(name: string): Readonly<Record<string, string>> {
-  const path = `${STACK_DIR}${name}.json`;
-  if (!existsSync(path)) return {};
-  const parsed = JSON.parse(readFileSync(path, 'utf8')) as Manifest;
-  return parsed.endpoints;
+function readManifests(): readonly Manifest[] {
+  if (!existsSync(STACK_DIR)) return [];
+  return readdirSync(STACK_DIR)
+    .filter((name) => /^apphost-.+\.json$/.test(name))
+    .sort()
+    .map((name) => JSON.parse(readFileSync(`${STACK_DIR}${name}`, 'utf8')) as Manifest);
 }
 
-const manifest = { ...readManifest('apphost-a'), ...readManifest('apphost-b') };
+const manifests = readManifests();
+
+/** The control plane's half: every manifest that is not an instance's, merged. */
+const manifest: Readonly<Record<string, string>> = Object.assign(
+  {},
+  ...manifests.filter((m) => m.tenant === undefined).map((m) => m.endpoints),
+) as Readonly<Record<string, string>>;
 
 /**
  * `MERCATUS_EP_STORE_POOLED` was written as `store_pooled`; the suite has always called it
@@ -54,11 +69,44 @@ export const ENDPOINTS = {
   dashboard: endpoint('dashboard'),
   admin: endpoint('admin'),
   edge: endpoint('edge'),
-  /** AppHost B -- "Zenith's VPS". Optional: the suite skips its spec when B is not up. */
-  storeDedicated: endpoint('storeDedicated'),
-  storefrontDedicated: endpoint('storefrontDedicated'),
-  dashboardDedicated: endpoint('dashboardDedicated'),
 } as const;
+
+/**
+ * One dedicated instance's three surfaces. The same three every AppHost B publishes, whatever
+ * tenant it was started for.
+ */
+export interface DedicatedEndpoints {
+  readonly slug: string;
+  readonly store: string;
+  readonly storefront: string;
+  readonly dashboard: string;
+}
+
+/**
+ * Every dedicated instance that is currently publishing an address book, by slug.
+ *
+ * Empty when no AppHost B is running, which is the everyday loop and not a failure: the specs
+ * that need one skip themselves. A second entry appears the moment a second AppHost B runs with
+ * another MERCATUS_TENANT_SLUG -- no key here, and no key in the manifest, names a tenant.
+ */
+export const DEDICATED: Readonly<Record<string, DedicatedEndpoints>> = Object.fromEntries(
+  manifests
+    .filter((m): m is Manifest & { tenant: string } => typeof m.tenant === 'string')
+    .map((m) => [
+      m.tenant,
+      {
+        slug: m.tenant,
+        store: m.endpoints['store'] ?? '',
+        storefront: m.endpoints['storefront'] ?? '',
+        dashboard: m.endpoints['dashboard'] ?? '',
+      },
+    ]),
+);
+
+/** The instance serving this tenant, or null when it is not running. */
+export function dedicated(slug: string): DedicatedEndpoints | null {
+  return DEDICATED[slug] ?? null;
+}
 
 /**
  * The port the control plane was allocated this run.

@@ -24,6 +24,7 @@ import {
   PLATFORM_PORT,
   TENANTS,
   captureProcess,
+  dedicated,
   licenceView,
   pidOnPort,
   probe,
@@ -44,6 +45,15 @@ import {
 const SHOPPER = freshShopper('Zenith Shopper');
 const SLUG = TENANTS.zenith.slug;
 
+/**
+ * Which box serves zenith this run, read off `.stack/` rather than assumed to be "AppHost B".
+ *
+ * Since v2.0.0 phase 2 one AppHost B serves any tenant by MERCATUS_TENANT_SLUG, so the three
+ * addresses this spec drives belong to an INSTANCE that named itself, not to a fixed half of the
+ * address book. Null is zenith not running, which skips -- the same signal as before.
+ */
+const ZENITH = dedicated(SLUG) ?? { slug: SLUG, store: '', storefront: '', dashboard: '' };
+
 let context: BrowserContext | undefined;
 let page: Page;
 let dedicatedUp = false;
@@ -55,9 +65,10 @@ test.describe.configure({ mode: 'serial' });
 test.describe('the dedicated instance keeps selling with the control plane down', () => {
   test.beforeAll(async ({ browser }) => {
     dedicatedUp =
-      (await reachable(ENDPOINTS.storeDedicated)) &&
-      (await reachable(ENDPOINTS.storefrontDedicated, `/t/${SLUG}`));
-    if (dedicatedUp) ordersBefore = await staffOrderCount(ENDPOINTS.storeDedicated, SLUG);
+      ZENITH.store !== '' &&
+      (await reachable(ZENITH.store)) &&
+      (await reachable(ZENITH.storefront, `/t/${SLUG}`));
+    if (dedicatedUp) ordersBefore = await staffOrderCount(ZENITH.store, SLUG);
     context = await browser.newContext();
     page = await context.newPage();
   });
@@ -74,26 +85,26 @@ test.describe('the dedicated instance keeps selling with the control plane down'
   });
 
   test('the same shopper signs in at the dedicated store', async () => {
-    test.skip(!dedicatedUp, 'AppHost B is not running');
+    test.skip(!dedicatedUp, `no dedicated instance is serving ${SLUG}`);
 
     // A different origin on a different server, so the session is that store's to issue -- which
     // is exactly what lets it verify the shopper offline for the rest of the outage (Q20).
-    await signIn(page, ENDPOINTS.storefrontDedicated, SHOPPER);
-    await page.goto(`${ENDPOINTS.storefrontDedicated}/t/${SLUG}`);
+    await signIn(page, ZENITH.storefront, SHOPPER);
+    await page.goto(`${ZENITH.storefront}/t/${SLUG}`);
     expect(await signedInAs(page)).toBe(SHOPPER.phone);
 
-    const view = await licenceView(ENDPOINTS.storeDedicated, SLUG);
+    const view = await licenceView(ZENITH.store, SLUG);
     expect(view.status).toBe('active');
     expect(view.state).toBe('healthy');
     await shot(page, '16-zenith-catalog');
   });
 
   test('buys from the dedicated store, control plane up', async () => {
-    test.skip(!dedicatedUp, 'AppHost B is not running');
+    test.skip(!dedicatedUp, `no dedicated instance is serving ${SLUG}`);
 
-    const title = await firstProductTitle(ENDPOINTS.storeDedicated, SLUG);
-    await addToBasket(page, ENDPOINTS.storefrontDedicated, SLUG, title);
-    const purchase = await checkout(page, ENDPOINTS.storefrontDedicated, SLUG);
+    const title = await firstProductTitle(ZENITH.store, SLUG);
+    await addToBasket(page, ZENITH.storefront, SLUG, title);
+    const purchase = await checkout(page, ZENITH.storefront, SLUG);
 
     expect(purchase.payment).toBe('paid');
     // Zenith's own counter, on its own database (BG2, CC2). On a fresh AppHost B that is 1.
@@ -102,7 +113,7 @@ test.describe('the dedicated instance keeps selling with the control plane down'
   });
 
   test('the control plane is stopped', async () => {
-    test.skip(!dedicatedUp, 'AppHost B is not running');
+    test.skip(!dedicatedUp, `no dedicated instance is serving ${SLUG}`);
 
     const pid = pidOnPort(PLATFORM_PORT);
     expect(pid, 'no process is listening on the platform port').not.toBeNull();
@@ -115,23 +126,23 @@ test.describe('the dedicated instance keeps selling with the control plane down'
 
     // The dedicated box notices by POLLING; nothing reaches into it to tell it (CE4).
     await expect
-      .poll(async () => (await licenceView(ENDPOINTS.storeDedicated, SLUG)).state, {
+      .poll(async () => (await licenceView(ZENITH.store, SLUG)).state, {
         timeout: 60_000,
       })
       .toBe('grace');
 
-    const view = await licenceView(ENDPOINTS.storeDedicated, SLUG);
+    const view = await licenceView(ZENITH.store, SLUG);
     // Unreachable is OURS and never becomes the merchant's status (CG3).
     expect(view.status).toBe('active');
   });
 
   test('the dedicated store still completes a checkout', async () => {
-    test.skip(!dedicatedUp, 'AppHost B is not running');
+    test.skip(!dedicatedUp, `no dedicated instance is serving ${SLUG}`);
     expect(await reachable(ENDPOINTS.platform)).toBe(false);
 
-    const title = await firstProductTitle(ENDPOINTS.storeDedicated, SLUG);
-    await addToBasket(page, ENDPOINTS.storefrontDedicated, SLUG, title);
-    const purchase = await checkout(page, ENDPOINTS.storefrontDedicated, SLUG);
+    const title = await firstProductTitle(ZENITH.store, SLUG);
+    await addToBasket(page, ZENITH.storefront, SLUG, title);
+    const purchase = await checkout(page, ZENITH.storefront, SLUG);
 
     // Placed, numbered and priced by their own database, with our control plane dark. `paid` when
     // the bank is still reachable, `unreachable` when it is not -- both are a completed checkout
@@ -142,17 +153,17 @@ test.describe('the dedicated instance keeps selling with the control plane down'
 
     // And the rest of the shop is untouched: browsing, the shopper's own orders, and the
     // merchant's dashboard on their own server.
-    expect((await probe(ENDPOINTS.storefrontDedicated, `/t/${SLUG}`)).status).toBe(200);
-    expect((await probe(ENDPOINTS.storeDedicated, '/health')).status).toBe(200);
-    expect((await probe(ENDPOINTS.dashboardDedicated, '/')).status).toBe(200);
+    expect((await probe(ZENITH.storefront, `/t/${SLUG}`)).status).toBe(200);
+    expect((await probe(ZENITH.store, '/health')).status).toBe(200);
+    expect((await probe(ZENITH.dashboard, '/')).status).toBe(200);
 
-    await page.goto(`${ENDPOINTS.storefrontDedicated}/t/${SLUG}/orders`);
+    await page.goto(`${ZENITH.storefront}/t/${SLUG}/orders`);
     await expect(page.locator('.sf-page-header')).toContainText('2 orders at this store');
     await shot(page, '19-zenith-orders-during-outage');
   });
 
   test('and catches up when the control plane comes back', async () => {
-    test.skip(!dedicatedUp, 'AppHost B is not running');
+    test.skip(!dedicatedUp, `no dedicated instance is serving ${SLUG}`);
     expect(captured, 'the control plane was never captured').not.toBeNull();
 
     const pid = relaunch(captured as CapturedProcess);
@@ -167,12 +178,12 @@ test.describe('the dedicated instance keeps selling with the control plane down'
 
     // One poll later, on its own, with nothing restarted on their side.
     await expect
-      .poll(async () => (await licenceView(ENDPOINTS.storeDedicated, SLUG)).state, {
+      .poll(async () => (await licenceView(ZENITH.store, SLUG)).state, {
         timeout: 60_000,
       })
       .toBe('healthy');
 
-    await page.goto(`${ENDPOINTS.storefrontDedicated}/t/${SLUG}`);
+    await page.goto(`${ZENITH.storefront}/t/${SLUG}`);
     await expect(page.locator('.sf-banner')).toHaveCount(0);
     await shot(page, '20-zenith-recovered');
   });

@@ -22,7 +22,6 @@ export {
   type LogtoClientOptions,
 } from './logto.js';
 export {
-  addRedirectUris,
   APPLICATION_NAMES,
   applicationSecret,
   installationApplicationName,
@@ -30,7 +29,7 @@ export {
   ensureInstallationClient,
   findApplicationByName,
   findOrganizationIdBySlug,
-  removeRedirectUris,
+  reconcileRedirectUris,
   type InstallationClient,
   type LogtoApplication,
 } from './applications.js';

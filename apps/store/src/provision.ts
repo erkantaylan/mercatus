@@ -45,7 +45,10 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
-import { registerInstallationResultSchema } from '@mercatus/contracts';
+import {
+  registerInstallationResultSchema,
+  reportInstallationResultSchema,
+} from '@mercatus/contracts';
 import {
   createStoreDb,
   ensureOrderCounter,
@@ -207,6 +210,62 @@ async function fetchIssuerMetadata(
 }
 
 /**
+ * Say where this box lives NOW, with the credential it already holds.
+ *
+ * The port is assigned by this box's own orchestrator, so a restart moves it -- and the redirect
+ * URI the control plane registered for the old address is a login that answers `400` at the
+ * issuer. Registration cannot fix that: it happened once, and the bootstrap token that authorised
+ * it is spent. Confirmed by doing it: restart AppHost B alone and its OIDC login is broken until
+ * something re-reports.
+ *
+ * Never fatal. A control plane that is down, or one that predates this endpoint, leaves the box
+ * exactly as it was (CG1).
+ */
+async function report(
+  platformUrl: string,
+  credential: InstanceCredential,
+): Promise<InstanceCredential> {
+  const urls = reportedUrls();
+  let response: Response;
+  try {
+    response = await fetch(`${platformUrl}/installations/report`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${credential.instanceToken}`,
+        'content-type': 'application/json',
+        accept: 'application/json',
+      },
+      body: JSON.stringify({ version: readVersion(), ...urls }),
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch (error) {
+    process.stdout.write(
+      `  could not re-report this box's address to ${platformUrl} ` +
+        `(${error instanceof Error ? error.message : String(error)}); keeping what we have\n`,
+    );
+    return credential;
+  }
+  if (!response.ok) {
+    // A 401 here is host pinning or a revoked token, and the control plane's log says which (S1).
+    process.stdout.write(
+      `  ${platformUrl} refused this box's address report: ${String(response.status)}. ` +
+        `The redirect URI it holds may be an address nothing is listening on.\n`,
+    );
+    return credential;
+  }
+  const result = reportInstallationResultSchema.parse(await response.json());
+  process.stdout.write(`  reported ${urls.baseUrl} to ${platformUrl}\n`);
+  return {
+    ...credential,
+    tenantId: result.tenantId,
+    tenantSlug: result.tenantSlug,
+    tenantName: result.tenantName,
+    // Null is "identity is not wired up", never "forget the client you have" (CG1).
+    oidc: result.oidc ?? credential.oidc,
+  };
+}
+
+/**
  * Does the control plane still know this credential? `GET /tenants/:slug/licence` is the same
  * call the licence agent makes every few seconds, so a green answer here means the box is
  * genuinely provisioned rather than merely holding a file.
@@ -242,10 +301,14 @@ export async function provision(): Promise<void> {
   if (existing) {
     const verdict = await credentialVerdict(platformUrl, existing);
     if (verdict === 'ok') {
-      credential = existing;
       process.stdout.write(
         `  credential at ${credentialPath} accepted by ${platformUrl}: installation ${existing.installationId}\n`,
       );
+      // Still registered -- but not necessarily at the address we last told them. This box's
+      // port is assigned by its own orchestrator and a restart moves it, so the address goes
+      // back up the wire on EVERY boot and the issuer's redirect URIs are reconciled with it.
+      credential = await report(platformUrl, existing);
+      writeInstanceCredential(credentialPath, credential);
     } else if (verdict === 'unreachable') {
       credential = existing;
       process.stdout.write(
@@ -297,7 +360,9 @@ export async function provision(): Promise<void> {
   // The tenant row is the control plane's, mirrored (BV1): its id is the one the heartbeat
   // reports and the one RLS scopes every row in this database to. N=1 and the same schema and
   // the same policies as pooled (CC2).
-  const name = process.env['TENANT_NAME'] ?? credential.tenantSlug;
+  // The control plane's name for this tenant, not a literal in an AppHost: one orchestrator file
+  // serves any tenant by slug, and the name is the fact we ask for rather than carry (BV1).
+  const name = process.env['TENANT_NAME'] ?? credential.tenantName ?? credential.tenantSlug;
   const seedCatalog = process.env['DEV_SEED_CATALOG'] === '1';
   const { db, close } = createStoreDb(adminUrl, { max: 2 });
   try {

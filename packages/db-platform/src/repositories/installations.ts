@@ -11,7 +11,7 @@
  */
 import { createHash } from 'node:crypto';
 
-import { desc, eq, isNotNull } from 'drizzle-orm';
+import { and, desc, eq, isNotNull, ne } from 'drizzle-orm';
 
 import type { PlatformExecutor } from '../client.js';
 import type { InstallationRow } from '../schema.js';
@@ -131,6 +131,58 @@ export async function listRegisteredInstallations(
     .from(installations)
     .where(isNotNull(installations.registeredAt))
     .orderBy(desc(installations.createdAt));
+}
+
+/**
+ * Every OTHER installation that has reported an address.
+ *
+ * The merchant dashboard and the storefront are ONE Logto application each, shared by every
+ * tenant, so a redirect URI one installation added may be the one another installation is serving
+ * on. Provisioning and deprovisioning both have to know what is still claimed before they take
+ * anything away -- without this, deleting a throwaway installation deletes a live box's callback
+ * out from under it, which was observed on a running stack and not theorised.
+ */
+export async function listOtherInstallations(
+  db: PlatformExecutor,
+  excludeId: string,
+): Promise<InstallationRow[]> {
+  return db
+    .select()
+    .from(installations)
+    .where(and(ne(installations.id, excludeId), isNotNull(installations.baseUrl)));
+}
+
+/**
+ * A registered instance says where it lives NOW.
+ *
+ * Its port is assigned by its own orchestrator, so a box that restarts comes back somewhere else
+ * -- and a redirect URI at the old port is a login that answers 400 at the issuer. The row is the
+ * only record of where to find it, and it is only correct if re-reporting is a thing an instance
+ * can do without spending a bootstrap token it no longer has. Authenticated by the instance
+ * token, and host-checked exactly as registration is.
+ */
+export async function updateReportedUrls(
+  db: PlatformExecutor,
+  input: {
+    id: string;
+    version: string;
+    baseUrl: string;
+    dashboardUrl: string | null;
+    storefrontUrl: string | null;
+  },
+): Promise<InstallationRow | null> {
+  const rows = await db
+    .update(installations)
+    .set({
+      version: input.version,
+      baseUrl: input.baseUrl,
+      dashboardUrl: input.dashboardUrl,
+      storefrontUrl: input.storefrontUrl,
+      lastSeenAt: new Date(),
+    })
+    .where(eq(installations.id, input.id))
+    .returning();
+  return rows[0] ?? null;
 }
 
 /** By id. Deprovisioning needs the row it is about to undo (CK1). */

@@ -105,35 +105,40 @@ async function writeUris(
   return true;
 }
 
-/** Adds redirect URIs to an EXISTING application, by name. Idempotent. Missing app -> false. */
-export async function addRedirectUris(
+/**
+ * Add and remove in ONE read-modify-write, on an existing application, by name. Missing app ->
+ * false. Idempotent: a call that changes nothing issues no PATCH.
+ *
+ * Add-and-remove together rather than two calls, because they are two halves of one fact. A
+ * dedicated instance that comes back on a new Aspire-assigned port wants its new callback added
+ * and its old one taken away; doing that as `add` then `remove` leaves a window in which the
+ * shared application carries both, and doing only the `add` -- which is what v2.0.0 phase 1 did
+ * -- leaks one dead URI per restart, for ever, on an application every tenant shares.
+ *
+ * `remove` is applied FIRST and `add` second, so a URI named in both survives. The caller's job
+ * is to have already subtracted anything another installation still needs: this function knows
+ * about strings, not about ownership.
+ */
+export async function reconcileRedirectUris(
   client: LogtoManagementClient,
   name: string,
-  input: { redirectUris?: readonly string[]; postLogoutRedirectUris?: readonly string[] },
+  input: {
+    add?: readonly string[];
+    remove?: readonly string[];
+    addPostLogout?: readonly string[];
+    removePostLogout?: readonly string[];
+  },
 ): Promise<boolean> {
   const app = await findApplicationByName(client, name);
   if (!app) return false;
   return writeUris(
     client,
     app,
-    union(app.oidcClientMetadata?.redirectUris, input.redirectUris ?? []),
-    union(app.oidcClientMetadata?.postLogoutRedirectUris, input.postLogoutRedirectUris ?? []),
-  );
-}
-
-/** The other half of the pair (CK1). Removing what was never added is a no-op, not a failure. */
-export async function removeRedirectUris(
-  client: LogtoManagementClient,
-  name: string,
-  input: { redirectUris?: readonly string[]; postLogoutRedirectUris?: readonly string[] },
-): Promise<boolean> {
-  const app = await findApplicationByName(client, name);
-  if (!app) return false;
-  return writeUris(
-    client,
-    app,
-    difference(app.oidcClientMetadata?.redirectUris, input.redirectUris ?? []),
-    difference(app.oidcClientMetadata?.postLogoutRedirectUris, input.postLogoutRedirectUris ?? []),
+    union(difference(app.oidcClientMetadata?.redirectUris, input.remove ?? []), input.add ?? []),
+    union(
+      difference(app.oidcClientMetadata?.postLogoutRedirectUris, input.removePostLogout ?? []),
+      input.addPostLogout ?? [],
+    ),
   );
 }
 
@@ -171,11 +176,17 @@ export async function ensureInstallationClient(
       },
     }));
   if (existing) {
+    // AUTHORITATIVE, not a union. This application belongs to exactly ONE installation, so there
+    // is no other owner whose callback a replacement could break -- and the instance's port is
+    // assigned by its own orchestrator, so a union grows this list by one dead URI on every
+    // restart. (Measured: one restart of AppHost B left both `…:19015/auth/callback` and
+    // `…:17031/auth/callback` on it.) The shared dashboard and storefront clients are the ones
+    // that need ownership arithmetic, and they get it in `reconcileRedirectUris`.
     await writeUris(
       client,
       existing,
-      union(existing.oidcClientMetadata?.redirectUris, input.redirectUris),
-      union(existing.oidcClientMetadata?.postLogoutRedirectUris, input.postLogoutRedirectUris ?? []),
+      [...input.redirectUris],
+      [...(input.postLogoutRedirectUris ?? [])],
     );
   }
   return {

@@ -33,6 +33,13 @@ export const instanceCredentialSchema = z.object({
   tenantId: z.uuid(),
   tenantSlug: z.string().min(2),
   /**
+   * The tenant's display name, as the CONTROL PLANE holds it (BV1). Mirrored into this box's own
+   * database by the install command, so that one AppHost can serve any tenant by slug alone --
+   * the name was the last per-tenant string that could not be derived from the slug (v2.0.0
+   * phase 2). Optional because a credential file written before it existed is still a credential.
+   */
+  tenantName: z.string().min(1).optional(),
+  /**
    * The issuer client the control plane minted FOR THIS INSTANCE when it registered (v2.0.0).
    * Ours alone, not the pooled plane's (CE1). It is kept here as well as in the identity cache so
    * that a deleted cache file can be rebuilt from the credential without spending a bootstrap

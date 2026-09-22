@@ -261,13 +261,28 @@ that used to sit here would be wrong on the first run. Each AppHost writes its o
 address book as it comes up:
 
 ```bash
-cat .stack/apphost-a.json    # platform, store-pooled, bank, storefront, dashboard, admin, edge
-cat .stack/apphost-b.json    # store-zenith, storefront-zenith, dashboard-zenith
+cat .stack/apphost-a.json        # platform, store-pooled, bank, storefront, dashboard, admin, edge
+cat .stack/apphost-zenith.json   # store, storefront, dashboard -- and the tenant they serve
 ```
 
-`packages/e2e/tests/helpers/stack.ts` merges the two and drives whatever it finds; B's half being
-absent is exactly what makes the dedicated-instance spec skip. Both Aspire dashboards
-(**15230** and **15240**) list the same addresses if you would rather click.
+One file per dedicated instance, named after its **tenant**, because since **v2.0.0** there is one
+AppHost B for any tenant rather than one per tenant:
+
+```bash
+cd aspire/AppHostB && MERCATUS_TENANT_SLUG=orion aspire run --detach --non-interactive --nologo --format Json
+```
+
+Everything about that box derives from the slug -- the Aspire resource names, its Postgres
+container and database, `.instance/<slug>.json`, `.identity/store-<slug>.json`, the storefront's
+`.next-<slug>` build directory, its dev bootstrap token and `.stack/apphost-<slug>.json`. The
+tenant's display NAME is not in the AppHost at all: the control plane says what it is in the
+registration answer and the install command mirrors it. Two of these at once take
+`aspire run --isolated` for the second, which randomises the three CLI ports in
+`apphost.run.json`; nothing else collides.
+
+`packages/e2e/tests/helpers/stack.ts` globs `.stack/apphost-*.json` and drives whatever it finds;
+an instance with no file is one that is not up, which is exactly what makes its spec skip. Both
+Aspire dashboards (**15230** and **15240**) list the same addresses if you would rather click.
 
 **Three** ports are still fixed, because AppHost B has to find A without reading A's application
 model: the edge (`28080`) and identity with its admin API (`28311`, `28312`). Each reads an
@@ -284,7 +299,16 @@ minted, and a `baseUrl` on any other host is refused with the same generic 401 a
 gets, the real reason in the log (`GK`, `S1`). Adding a dedicated tenant is now zero edits to
 AppHost A. `DELETE /installations/:id` is the other half, built at the same time (`CK1`): it
 deletes that instance's client at the issuer and takes its redirect URIs back out of the shared
-ones.
+ones -- the ones nobody else is still serving on, which is a refcount over the installation rows
+and not a set-difference.
+
+`POST /installations/report` is the same conversation, repeatable, with the credential the box
+already holds. A dedicated instance's port is assigned by ITS orchestrator, so a restart moves it
+and the redirect URI we hold for the old address is a login that fails at the issuer; the install
+command re-reports on every boot and the shared clients follow it, old URI out, new URI in.
+`packages/identity/scripts/list-applications.sh` prints every application Logto holds and the
+redirect URIs on it, which is the one question worth asking when a login answers
+`oidc.invalid_redirect_uri`.
 
 One `aspire run` in `aspire/AppHostA` starts all of A — the control plane, the pooled store, the
 storefront, the dashboard, the console, identity and the edge. AppHost **B** starts its own
@@ -301,7 +325,7 @@ driven with curl) and not by `pnpm test:e2e`. Logto is started, health-checked a
 every run regardless, which costs a container and a bootstrap step.
 
 **The demo.** With both up, buy something on the dedicated storefront —
-`jq -r .endpoints.storefront_dedicated .stack/apphost-b.json` is where it landed this run. Then
+`jq -r .endpoints.storefront .stack/apphost-zenith.json` is where it landed this run. Then
 `cd aspire/AppHostA && aspire stop` — the whole control plane, not a resource — and buy again.
 The dedicated store keeps serving and keeps taking orders; only the payment waits, because
 payments are ours and never run on a customer's server (`CE2`). After
@@ -334,7 +358,7 @@ not restart it, A's database survives, and B recovers on its own within one poll
 **The checks.**
 
 ```bash
-pnpm -r test                    # 244 tests, 0 skipped, no stack needed
+pnpm -r test                    # 261 tests, 0 skipped, no stack needed
 pnpm turbo run typecheck lint   # 26 tasks
 pnpm test:e2e                   # 16 Playwright tests in real Chrome -- needs both AppHosts up
 ```

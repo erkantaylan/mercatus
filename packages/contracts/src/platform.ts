@@ -218,7 +218,38 @@ export const registerInstallationResultSchema = z.object({
   instanceToken: z.string().min(32),
   tenantId: uuidSchema,
   tenantSlug: slugSchema,
+  /**
+   * The tenant's display name, as WE hold it. The instance mirrors it (BV1) rather than carrying
+   * a copy in its own configuration -- which is what let one AppHost serve any tenant by slug
+   * alone (v2.0.0 phase 2): the name was the one per-tenant string that could not be derived.
+   */
+  tenantName: z.string().min(1),
   /** Configured BY THE ANSWER, not by environment. Null when identity is not wired up. */
+  oidc: instanceOidcSchema.nullable(),
+});
+
+/**
+ * A REGISTERED instance says where it lives now -- authenticated by its instance token, not by a
+ * bootstrap token it spent long ago.
+ *
+ * Its port is assigned by its own orchestrator (that is the whole of v2.0.0), so a box that
+ * restarts comes back at a different address, and the redirect URI we registered for the old one
+ * answers `400` at the issuer. Registration alone cannot fix that: it happens once. This is the
+ * same conversation, repeatable, and host-pinned in exactly the same way.
+ */
+export const reportInstallationBodySchema = z.object({
+  version: z.string().min(1),
+  baseUrl: z.url(),
+  dashboardUrl: z.url().optional(),
+  storefrontUrl: z.url().optional(),
+});
+
+/** The register answer without the instance token: the caller already has one. */
+export const reportInstallationResultSchema = z.object({
+  installationId: uuidSchema,
+  tenantId: uuidSchema,
+  tenantSlug: slugSchema,
+  tenantName: z.string().min(1),
   oidc: instanceOidcSchema.nullable(),
 });
 
@@ -253,5 +284,7 @@ export type CreateInstallationBody = z.infer<typeof createInstallationBodySchema
 export type CreateInstallationResult = z.infer<typeof createInstallationResultSchema>;
 export type RegisterInstallationBody = z.infer<typeof registerInstallationBodySchema>;
 export type RegisterInstallationResult = z.infer<typeof registerInstallationResultSchema>;
+export type ReportInstallationBody = z.infer<typeof reportInstallationBodySchema>;
+export type ReportInstallationResult = z.infer<typeof reportInstallationResultSchema>;
 export type InstanceOidc = z.infer<typeof instanceOidcSchema>;
 export type HeartbeatBody = z.infer<typeof heartbeatBodySchema>;

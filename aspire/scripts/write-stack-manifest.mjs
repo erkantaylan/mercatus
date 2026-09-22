@@ -11,8 +11,15 @@
  * which is the only shape a ReferenceExpression can be passed in. Keys are lower-cased and the
  * underscores kept, so MERCATUS_EP_STORE_POOLED lands as `store_pooled`.
  *
- *   MERCATUS_MANIFEST_OUT   where to write, relative to this process's cwd
- *   MERCATUS_EP_*           one per endpoint
+ *   MERCATUS_MANIFEST_OUT     where to write, relative to this process's cwd
+ *   MERCATUS_MANIFEST_TENANT  optional: the tenant this whole file belongs to
+ *   MERCATUS_EP_*             one per endpoint
+ *
+ * `MERCATUS_MANIFEST_TENANT` is what makes a file an INSTANCE's half rather than the control
+ * plane's (v2.0.0 phase 2). A dedicated AppHost writes `.stack/apphost-{slug}.json` with unqualified
+ * keys -- `store`, `storefront`, `dashboard` -- and names the tenant once, here, so that N of them
+ * can exist side by side without every key having to carry the slug and every reader having to
+ * parse it back out. AppHost A writes no tenant, because it is not one.
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -36,9 +43,18 @@ if (Object.keys(endpoints).length === 0) {
   process.exit(1);
 }
 
+const tenant = process.env.MERCATUS_MANIFEST_TENANT;
+
 const path = resolve(process.cwd(), out);
 mkdirSync(dirname(path), { recursive: true });
-writeFileSync(path, `${JSON.stringify({ writtenAt: new Date().toISOString(), endpoints }, null, 2)}\n`);
+writeFileSync(
+  path,
+  `${JSON.stringify(
+    { writtenAt: new Date().toISOString(), ...(tenant ? { tenant } : {}), endpoints },
+    null,
+    2,
+  )}\n`,
+);
 
-console.log(`Wrote ${path}`);
+console.log(`Wrote ${path}${tenant ? ` (tenant ${tenant})` : ''}`);
 for (const [name, url] of Object.entries(endpoints)) console.log(`  ${name.padEnd(22)} ${url}`);
