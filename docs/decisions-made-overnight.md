@@ -387,3 +387,39 @@ file is where they are amended.
 - **`tenants` is in the suite even though it has no RLS**, asserted through grants instead:
   `mercatus_app` selects, and insert/update/delete each come back `permission denied` / 42501.
   BE4 is about checking each store separately, and "no policy" is not "no test".
+
+## Task 07c — apps/admin, the platform console
+
+- **Routes are written in code, not generated from files.** `@tanstack/router-plugin` is in the
+  catalog at 1.168.40 against a router at 1.170.38, and a committed `routeTree.gen.ts` is an
+  artifact that lint, typecheck and `.gitignore` all then have to be told about. Five routes
+  (`createRootRoute` + four `createRoute`s) are less code than the plugin's configuration. The
+  dashboard is free to choose differently; nothing shared depends on this.
+- **`apps/admin` does not import `@mercatus/contracts`.** `contracts` imports `@mercatus/core` for
+  two paging constants, and core's barrel re-exports `http/server.js`, which imports Fastify — so
+  one Zod schema pulls Fastify and `node:async_hooks` into a browser bundle. The console restates
+  the four shapes it needs in `src/api/schemas.ts`, in Zod, and **parses** responses rather than
+  casting them. The real fix is to stop `packages/core`'s barrel being the only way to reach
+  `DEFAULT_PAGE_LIMIT`; that is a change to `packages/` and three agents were in the tree.
+- **The console reads `VITE_PLATFORM_URL`, defaulting to `http://127.0.0.1:4001`.** §8.2 names the
+  variable `PLATFORM_URL`; Vite only exposes `VITE_`-prefixed variables to the browser, which is
+  the same treatment `VITE_STORE_API_URL` already has in that table.
+- **The operator token lives in `localStorage` behind a small external store.** The store exists
+  because the shell reads the session too — signing in has to light up the nav without a reload —
+  and `useSyncExternalStore` needs a cached snapshot. The Identity phase replaces the file; an
+  operator session surviving a browser restart stops being acceptable then.
+- **Three states are shown, not two: `pending`, `active`, `passive`.** The flip button is disabled
+  on a `pending` tenant (the API answers 409) and the screen says why. Collapsing "has not paid
+  yet" into "was suspended" hides which person fixes it (CG3).
+- **The console never displays or sets an `unreachable` state.** That is computed in the data
+  plane from how long it has been since the licence verified, and putting it on the same screen as
+  the flip is how the two get confused. The detail page says so in as many words.
+- **No screen for `POST /installations` (issue a bootstrap token), and no payments screen.** The
+  first is forty lines whenever somebody wants it; task 10 exercises the endpoint by hand. The
+  second cannot be built at all — `apps/platform` has no `GET /payments`, only the callback, so
+  the screen would need an endpoint first, outside this task's scope.
+- **`apps/admin` declares no `test` script.** Its gate is a browser driving a real control plane.
+  An app with the script and no test files fails `pnpm -r test` outright (lesson 03).
+- **The console is never branded.** DW's per-tenant branding is a wrapper element in the
+  storefront; an operator comparing three tenants should not have the page change colour under
+  them. `@mercatus/ui/tokens.css` is consumed as-is.

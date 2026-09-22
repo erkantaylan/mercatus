@@ -1,0 +1,370 @@
+/*
+ * The console's layout and its small component set. Plain CSS, tokens only -- no colour, spacing
+ * or font literal appears below this line; they all come from @mercatus/ui/tokens.css, which
+ * @mercatus/ui/reset.css is loaded before.
+ */
+
+/* --------------------------------------------------- what the reset leaves */
+
+/* The shared reset is for every front end; a full-height column shell is this app's business. */
+html,
+body,
+#root {
+  height: 100%;
+}
+
+h1,
+h2,
+h3,
+p,
+dl,
+figure {
+  margin: 0;
+}
+
+a {
+  color: var(--mc-accent);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+/* ------------------------------------------------------------------- shell */
+
+.mc-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.mc-topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--mc-space-5);
+  padding: var(--mc-space-3) var(--mc-space-5);
+  background: var(--mc-surface);
+  border-bottom: 1px solid var(--mc-border);
+}
+
+.mc-brand {
+  display: flex;
+  align-items: baseline;
+  gap: var(--mc-space-2);
+  font-weight: 600;
+}
+
+.mc-brand__mark {
+  font-size: var(--mc-text-lg);
+}
+
+.mc-brand__what {
+  color: var(--mc-fg-muted);
+  font-size: var(--mc-text-sm);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.mc-nav {
+  display: flex;
+  gap: var(--mc-space-4);
+}
+
+.mc-nav a {
+  color: var(--mc-fg-muted);
+  padding: var(--mc-space-1) 0;
+  border-bottom: 2px solid transparent;
+}
+
+.mc-nav a:hover {
+  text-decoration: none;
+  color: var(--mc-fg);
+}
+
+.mc-nav a.mc-nav--active {
+  color: var(--mc-fg);
+  border-bottom-color: var(--mc-accent);
+}
+
+.mc-topbar__end {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--mc-space-3);
+  color: var(--mc-fg-muted);
+  font-size: var(--mc-text-sm);
+}
+
+.mc-main {
+  flex: 1;
+  width: 100%;
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: var(--mc-space-5) var(--mc-space-4) var(--mc-space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--mc-space-5);
+}
+
+/* ------------------------------------------------------------- page header */
+
+.mc-page-header {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--mc-space-4);
+}
+
+.mc-page-header__text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mc-space-1);
+}
+
+.mc-page-header h1 {
+  font-size: var(--mc-text-xl);
+  font-weight: 600;
+}
+
+.mc-page-header p {
+  color: var(--mc-fg-muted);
+  font-size: var(--mc-text-sm);
+}
+
+.mc-page-header__actions {
+  margin-left: auto;
+  display: flex;
+  gap: var(--mc-space-2);
+}
+
+/* -------------------------------------------------------------------- card */
+
+.mc-card {
+  background: var(--mc-surface);
+  border: 1px solid var(--mc-border);
+  border-radius: var(--mc-radius-lg);
+  box-shadow: var(--mc-shadow);
+}
+
+.mc-card__head {
+  display: flex;
+  align-items: center;
+  gap: var(--mc-space-3);
+  padding: var(--mc-space-3) var(--mc-space-4);
+  border-bottom: 1px solid var(--mc-border);
+  font-weight: 600;
+}
+
+.mc-card__body {
+  padding: var(--mc-space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--mc-space-4);
+}
+
+.mc-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: var(--mc-space-4);
+}
+
+/* ------------------------------------------------------------------- table */
+
+.mc-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.mc-table th,
+.mc-table td {
+  text-align: left;
+  padding: var(--mc-space-3) var(--mc-space-4);
+  border-bottom: 1px solid var(--mc-border);
+  vertical-align: middle;
+}
+
+.mc-table th {
+  font-size: var(--mc-text-sm);
+  font-weight: 600;
+  color: var(--mc-fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.mc-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.mc-table tbody tr:hover {
+  background: var(--mc-bg);
+}
+
+.mc-mono {
+  font-family: var(--mc-font-mono);
+  font-size: var(--mc-text-sm);
+}
+
+.mc-muted {
+  color: var(--mc-fg-muted);
+}
+
+/* -------------------------------------------------------------- definitions */
+
+.mc-defs {
+  display: grid;
+  grid-template-columns: minmax(120px, max-content) 1fr;
+  gap: var(--mc-space-2) var(--mc-space-4);
+  margin: 0;
+}
+
+.mc-defs dt {
+  color: var(--mc-fg-muted);
+  font-size: var(--mc-text-sm);
+}
+
+.mc-defs dd {
+  margin: 0;
+}
+
+/* ------------------------------------------------------------------- pill */
+
+.mc-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--mc-space-1);
+  padding: 2px var(--mc-space-2);
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  font-size: var(--mc-text-sm);
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.mc-pill--active {
+  color: var(--mc-success);
+}
+
+.mc-pill--passive {
+  color: var(--mc-danger);
+}
+
+.mc-pill--pending {
+  color: var(--mc-warning);
+}
+
+.mc-pill--neutral {
+  color: var(--mc-fg-muted);
+}
+
+/* ----------------------------------------------------------------- button */
+
+.mc-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--mc-space-2);
+  padding: var(--mc-space-2) var(--mc-space-4);
+  border-radius: var(--mc-radius);
+  border: 1px solid var(--mc-border);
+  background: var(--mc-surface);
+  color: var(--mc-fg);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.mc-button:hover:not(:disabled) {
+  border-color: var(--mc-fg-muted);
+}
+
+.mc-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.mc-button--primary {
+  background: var(--mc-accent);
+  border-color: var(--mc-accent);
+  color: var(--mc-accent-fg);
+}
+
+.mc-button--danger {
+  background: var(--mc-danger);
+  border-color: var(--mc-danger);
+  color: var(--mc-accent-fg);
+}
+
+/* ----------------------------------------------------------------- banner */
+
+.mc-banner {
+  display: flex;
+  gap: var(--mc-space-3);
+  padding: var(--mc-space-3) var(--mc-space-4);
+  border-radius: var(--mc-radius);
+  border: 1px solid currentColor;
+  font-size: var(--mc-text-base);
+}
+
+.mc-banner--info {
+  color: var(--mc-accent);
+}
+
+.mc-banner--warning {
+  color: var(--mc-warning);
+}
+
+.mc-banner--danger {
+  color: var(--mc-danger);
+}
+
+.mc-banner__body {
+  color: var(--mc-fg);
+}
+
+/* ------------------------------------------------------------------ forms */
+
+.mc-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mc-space-1);
+}
+
+.mc-field label {
+  font-size: var(--mc-text-sm);
+  color: var(--mc-fg-muted);
+  font-weight: 600;
+}
+
+.mc-input {
+  padding: var(--mc-space-2) var(--mc-space-3);
+  border: 1px solid var(--mc-border);
+  border-radius: var(--mc-radius);
+  background: var(--mc-surface);
+}
+
+.mc-input:focus {
+  outline: 2px solid var(--mc-accent);
+  outline-offset: 1px;
+}
+
+.mc-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mc-space-4);
+  max-width: 420px;
+}
+
+/* -------------------------------------------------------------- empty/load */
+
+.mc-empty {
+  padding: var(--mc-space-6);
+  text-align: center;
+  color: var(--mc-fg-muted);
+}
+
+.mc-row {
+  display: flex;
+  align-items: center;
+  gap: var(--mc-space-3);
+  flex-wrap: wrap;
+}
