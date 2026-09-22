@@ -17,6 +17,19 @@
   `drizzle.config.ts` reads it eagerly. Any junk URL does.
 - `db.execute<Row>()` needs `Row extends Record<string, unknown>`, or TS2344.
 
+## Proving F1 both ways on a throwaway database
+
+- The whole reproduction is: seed two tenants as `mercatus_owner` (inside `set_config` blocks,
+  because FORCE binds the owner), then as `mercatus_app` in tenant B's context insert an
+  `order_lines` row carrying B's `tenant_id` and A's `order_id`. Old FKs: `INSERT 0 1`, and A's
+  own `delete from orders` then fails for ever. New FKs: `23503`, and A deletes its own order.
+- **`psql -q` swallows `INSERT 0 1` and `DELETE 1`.** Running the attack script quietly makes a
+  successful plant look like nothing happened, and the only line you see is an unrelated error.
+  Drop `-q` for anything whose command tag IS the result.
+- A destructive probe consumes its fixture. The second run of the same script failed for a
+  completely different reason (the parent row was already gone) and looked like the fix working.
+  Re-seed between runs, or you will draw the wrong conclusion twice.
+
 ## SECURITY DEFINER, done properly
 
 ```sql

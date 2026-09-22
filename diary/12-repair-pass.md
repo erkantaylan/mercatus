@@ -129,6 +129,40 @@ Settlement lived only in the storefront process's memory. Now:
 - `docs/OPEN-DEFECTS.md` records F1–F3 as fixed with the fix under each; F4 is informational, F5
   and F6 are still open and still minor.
 
+## F1, before and after, on a throwaway database
+
+Because a fix nobody has seen fail is not evidence. Same two tenants, same statements, the only
+difference being which foreign keys the table carries. Container created and removed for this.
+
+**Old schema — single-column foreign keys.** As tenant `B`, as `mercatus_app`, planting a line on
+A's order while carrying B's own `tenant_id`:
+
+```
+BEGIN
+INSERT 0 1                       <-- accepted
+COMMIT
+BEGIN                            <-- now tenant A, deleting ITS OWN order
+DELETE 0                         <-- A cannot see the planted line
+ERROR:  update or delete on table "orders" violates foreign key constraint
+        "order_lines_order_id_orders_id_fk" on table "order_lines"
+DETAIL:  Key is still referenced from table "order_lines".
+ROLLBACK
+```
+
+**New schema — composite foreign keys.** Identical statements:
+
+```
+BEGIN
+ERROR:  insert or update on table "order_lines" violates foreign key constraint
+        "order_lines_order_tenant_fk"
+DETAIL:  Key is not present in table "orders".
+ROLLBACK
+BEGIN                            <-- tenant A, deleting its own order
+DELETE 0
+DELETE 1                         <-- unblocked
+COMMIT
+```
+
 ## For the next agent
 
 - Order numbers in `acme` and `borg` are no longer 1 — the e2e suite ran three times. That is
