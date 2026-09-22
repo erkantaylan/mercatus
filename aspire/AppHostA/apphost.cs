@@ -84,7 +84,16 @@ var repoRoot = "../..";
 var logtoBase = $"http://127.0.0.1:{logtoPort}";
 var logtoAdminBase = $"http://127.0.0.1:{logtoAdminPort}";
 var logtoIssuer = $"{logtoBase}/oidc";
-var storeDedicatedBase = $"http://127.0.0.1:{storeDedicatedPort}";
+// `localhost`, not `127.0.0.1`, and the spelling is load-bearing. This string ends up as the
+// dedicated store's REDIRECT URI in Logto, and Logto matches a redirect_uri as a STRING -- an
+// address that resolves to the same socket but is spelled differently is rejected with
+// `oidc.invalid_redirect_uri` at the very end of the round trip. The store builds the redirect_uri
+// it sends from its own STORE_PUBLIC_URL, which in AppHost B is an Aspire EndpointReference, and
+// Aspire renders every endpoint host as `localhost`. So `localhost` is what B will actually ask
+// for, `localhost` is what .stack/apphost-b.json publishes to the e2e suite, and therefore
+// `localhost` is what has to be registered here. Phase 1 deletes this guess: the instance reports
+// its own baseUrl and the platform registers exactly that.
+var storeDedicatedBase = $"http://localhost:{storeDedicatedPort}";
 
 // AUTH_ADAPTER for the data plane. The DEFAULT IS STILL `stub`, deliberately: the dashboard, the
 // admin console and the storefront all sign in through `/dev/login/*`, which exists only while
@@ -200,12 +209,20 @@ var logto = builder.AddContainer("infra-identity", "svhd/logto", "1.43.0")
 // at the repo root. Getting this wrong writes a cache nobody reads and fails silently.
 var identityCache = ".identity/store-pooled.json";
 var identityCacheFromPackage = $"../../{identityCache}";
+// AppHost B's store reads THIS file (OIDC_JWKS_CACHE_PATH in AppHostB). It holds the dedicated
+// client's registration plus the key set, and the dedicated instance never calls the Management
+// API for either -- it PULLS them off disk (CE4, CE7). Writing it is A's job for exactly as long
+// as A still knows B's address; phase 1 replaces it with the register response.
+// Without this variable the bootstrap writes only the pooled cache, the dedicated store starts
+// with clientId "" and its very first /auth/login answers 400 "not registered with the issuer".
+var identityCacheDedicated = ".identity/store-zenith.json";
 var logtoBootstrap = builder.AddExecutable("task-identity-bootstrap", "pnpm", repoRoot,
         "--filter", "@mercatus/identity", "bootstrap")
     .WithEnvironment("LOGTO_ENDPOINT", logtoBase)
     .WithEnvironment("LOGTO_ADMIN_ENDPOINT", logtoAdminBase)
     .WithEnvironment("LOGTO_DB_URL", SuperuserUrl(pgLogto, "logto"))
     .WithEnvironment("IDENTITY_CACHE_PATH", identityCacheFromPackage)
+    .WithEnvironment("IDENTITY_CACHE_PATH_DEDICATED", $"../../{identityCacheDedicated}")
     .WithEnvironment("IDENTITY_OUT", "../../.identity/bootstrap.json")
     // One of the four literals: B's store is registered as a redirect target here, before that
     // store exists and from an application model that cannot see it.

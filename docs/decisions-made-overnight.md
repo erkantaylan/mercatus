@@ -748,3 +748,35 @@ Decisions taken while writing `docs/MORNING.md` and reconciling the README with 
 - **`MORNING.md`'s paragraph labels continue the README's series at `EV`.** The README's own run
   ends at `EU`, and the convention is one counter that only ever increases, so `EV`–`FH` are new
   labels rather than a second sequence that would collide on the next reference.
+
+## Task 14 — phase 0, real OIDC on both planes
+
+Decisions taken while putting the dedicated instance on Logto ahead of any registration change
+(`docs/PLAN-opt-in-registration.md` phase 0).
+
+- **The dedicated store's redirect URI is spelled `localhost`, not `127.0.0.1`.** They are the same
+  socket and different strings, and Logto matches a `redirect_uri` as a string. The store builds
+  the one it sends from `STORE_PUBLIC_URL`, which in AppHost B is an Aspire `EndpointReference`,
+  and Aspire renders every endpoint host as `localhost`; `.stack/apphost-b.json` publishes the same
+  spelling to the e2e suite. So `localhost` is the spelling three consumers already agree on, and
+  the registration was the odd one out. The alternative — pinning B's `STORE_PUBLIC_URL` to a
+  `127.0.0.1` literal — would have made the manifest disagree with the store and left the e2e
+  suite unable to drive a login through the address it is given.
+- **Both loopback spellings were NOT registered.** Two URIs for one surface is the list-grows-
+  forever failure `CK1` warns about, and it would have hidden the mismatch rather than fixed it.
+- **`AUTH_ADAPTER` still defaults to `stub` in both AppHosts.** Phase 0's gate is the store's OIDC
+  round trip, and that now passes. Flipping the default would break the storefront, the merchant
+  dashboard and the platform console, none of which has an OIDC path at all — they sign in through
+  the store's `/dev/login/*`, which refuses to register under `oidc`. Moving those three over is
+  its own task; doing it inside phase 0 would have meant two things moving at once, which is the
+  exact thing phase 0 is ordered first to avoid.
+- **The dedicated storefront/dashboard redirect URIs were left registered at their stale defaults**
+  (`127.0.0.1:3002`, `127.0.0.1:5175`). AppHost A cannot know AppHost B's Aspire-assigned ports —
+  that is the disease phase 1 cures. Deleting the entries now would leave those two surfaces with
+  no registration at all and remove the slot phase 1 fills in; they are named in `lessons/14` and
+  in the diary instead.
+- **A second gate script was added rather than folded into the first.**
+  `packages/identity/scripts/shopper-sso-across-planes.sh` needs ONE issuer cookie jar spanning two
+  stores, which is the opposite of `login-round-trip.sh`'s one-store-one-jar shape. It asserts both
+  halves of the claim: the same subject at both planes, and each store's session cookie refused by
+  the other (Q20).
