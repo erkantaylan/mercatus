@@ -13,7 +13,8 @@
     "typecheck": "turbo run typecheck",
     "lint": "turbo run lint",
     "test": "turbo run test",
-    "check": "turbo run typecheck lint test"
+    "check": "turbo run typecheck lint test",
+    "dev-seed": "pnpm --filter @mercatus/db-platform seed && pnpm --filter @mercatus/db-platform seed:dedicated && pnpm --filter @mercatus/db-store seed"
   },
   "devDependencies": {
     "@eslint/js": "catalog:",

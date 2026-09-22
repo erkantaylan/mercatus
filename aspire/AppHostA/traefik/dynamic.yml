@@ -1,0 +1,41 @@
+# Traefik's dynamic configuration, file provider (BUILD-PLAN 8.1).
+#
+# Every backend is a process on the HOST, not a container, so each server URL goes through
+# host.docker.internal -- which the AppHost maps to the docker host gateway. The ports are the
+# fixed ones from 8.1; nothing here is discovered, because there is nothing to discover on a
+# single-machine POC and a static file is one fewer moving part than a docker provider.
+#
+# The store router is a catch-all at the lowest priority on purpose. Tenant resolution takes a
+# REQUEST, not a route parameter (3.6): `acme.localtest.me` and `/t/acme` are both valid ways to
+# name a tenant, and the edge must not decide which one is allowed.
+http:
+  routers:
+    platform:
+      rule: "Host(`platform.localtest.me`)"
+      entryPoints: [web]
+      service: platform
+      priority: 100
+    bank:
+      rule: "Host(`bank.localtest.me`)"
+      entryPoints: [web]
+      service: fake-bank
+      priority: 100
+    store-pooled:
+      rule: "PathPrefix(`/`)"
+      entryPoints: [web]
+      service: store-pooled
+      priority: 1
+
+  services:
+    platform:
+      loadBalancer:
+        servers:
+          - url: "http://host.docker.internal:4001"
+    fake-bank:
+      loadBalancer:
+        servers:
+          - url: "http://host.docker.internal:4004"
+    store-pooled:
+      loadBalancer:
+        servers:
+          - url: "http://host.docker.internal:4002"

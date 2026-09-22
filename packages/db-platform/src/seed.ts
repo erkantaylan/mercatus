@@ -91,7 +91,9 @@ function invokedDirectly(): boolean {
 }
 
 if (invokedDirectly()) {
-  const adminUrl = process.env['DATABASE_ADMIN_URL'];
-  if (!adminUrl) throw new Error('DATABASE_ADMIN_URL is not set (BUILD-PLAN §8.2).');
+  // The dev-seed step seeds two databases from one process, so the control plane's owner URL
+  // has its own variable -- the same reason the platform test suite reads PLATFORM_DATABASE_URL.
+  const adminUrl = process.env['PLATFORM_DATABASE_ADMIN_URL'] ?? process.env['DATABASE_ADMIN_URL'];
+  if (!adminUrl) throw new Error('PLATFORM_DATABASE_ADMIN_URL is not set (BUILD-PLAN §8.2).');
   await seed(adminUrl);
 }

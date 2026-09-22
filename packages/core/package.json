@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./telemetry": "./src/telemetry.ts",
     "./package.json": "./package.json"
   },
   "scripts": {
@@ -14,6 +15,11 @@
   },
   "dependencies": {
     "@fastify/cors": "catalog:",
+    "@opentelemetry/api": "catalog:",
+    "@opentelemetry/exporter-trace-otlp-grpc": "catalog:",
+    "@opentelemetry/instrumentation-http": "catalog:",
+    "@opentelemetry/instrumentation-pg": "catalog:",
+    "@opentelemetry/sdk-node": "catalog:",
     "@fastify/swagger": "catalog:",
     "@scalar/fastify-api-reference": "catalog:",
     "fastify": "catalog:",

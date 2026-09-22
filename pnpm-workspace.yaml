@@ -6,6 +6,7 @@ packages:
 # Resolved and checked 2026-09-22 (BUILD-PLAN.md §2).
 allowBuilds:
   esbuild: true
+  protobufjs: true
 
 catalog:
   # runtime
@@ -19,6 +20,14 @@ catalog:
   postgres: 3.4.9
   pino: 10.3.1
   jose: 6.2.12
+
+  # Telemetry. Aspire's dashboard is the whole stack (EQ); these read its env vars with no
+  # configuration of their own. The 0.x packages move together -- keep them on one version.
+  "@opentelemetry/api": 1.9.1
+  "@opentelemetry/sdk-node": 0.222.0
+  "@opentelemetry/exporter-trace-otlp-grpc": 0.222.0
+  "@opentelemetry/instrumentation-http": 0.222.0
+  "@opentelemetry/instrumentation-pg": 0.74.0
 
   # frontend
   react: 19.3.0
@@ -70,3 +79,5 @@ minimumReleaseAgeExclude:
 # pnpm refuses to install while a dependency has an unapproved build script.
 onlyBuiltDependencies:
   - esbuild
+  # @opentelemetry/exporter-trace-otlp-grpc -> @grpc/grpc-js -> protobufjs
+  - protobufjs

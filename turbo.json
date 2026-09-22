@@ -24,7 +24,12 @@
     },
     "migrate": {
       "cache": false,
-      "env": ["DATABASE_URL", "DATABASE_ADMIN_URL", "DATABASE_SUPERUSER_URL"]
+      "env": [
+        "DATABASE_URL",
+        "DATABASE_ADMIN_URL",
+        "DATABASE_SUPERUSER_URL",
+        "PLATFORM_DATABASE_ADMIN_URL"
+      ]
     },
     "dev": {
       "cache": false,

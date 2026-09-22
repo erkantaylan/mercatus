@@ -42,8 +42,8 @@ function runDrizzleKit(adminUrl: string): void {
 }
 
 async function main(): Promise<void> {
-  const adminUrl = process.env['DATABASE_ADMIN_URL'];
-  if (!adminUrl) throw new Error('DATABASE_ADMIN_URL is not set (BUILD-PLAN §8.2).');
+  const adminUrl = process.env['PLATFORM_DATABASE_ADMIN_URL'] ?? process.env['DATABASE_ADMIN_URL'];
+  if (!adminUrl) throw new Error('PLATFORM_DATABASE_ADMIN_URL is not set (BUILD-PLAN §8.2).');
   const superuserUrl = process.env['DATABASE_SUPERUSER_URL'] ?? adminUrl;
 
   say('db-platform: roles');

@@ -310,3 +310,53 @@ file is where they are amended.
 - **`POST /payments/proxy` from §6.1 was NOT built.** Checkout in the data plane ends at
   "ordered" and moves no money, so there is nothing to proxy yet; building it now would be
   guessing at the shape. It is the only endpoint in §6.1 that is missing.
+
+## Task 05 — aspire/AppHostA and the dev seed
+
+- **The AppHost directory is `aspire/AppHostA`, not `aspire/control-plane`.** BUILD-PLAN §1 names
+  the latter; the task brief and the architecture docs both talk about "AppHost A" and "AppHost B",
+  so the directory now says what the docs say. B goes in `aspire/AppHostB`.
+- **Traefik binds the fixed port 8080, not 8090.** §8.1 chose 8090 because `qbittorrent` held 8080
+  when task 00 looked; it was free on this machine tonight, and the brief fixes 8080 so AppHost B
+  can bind stable URLs. If a future run fails with `bind: address already in use`, qbittorrent is
+  back and this is the line to change.
+- **Two Postgres servers, `pg-platform` and `pg-store`, rather than one with two databases.**
+  Lesson 02 proved one cluster works, but the control plane and the data plane are separate blast
+  radii and a container each costs nothing on a laptop. It also makes the §8.1 boundary visible in
+  the dashboard rather than only in a `revoke connect`.
+- **Services are `AddExecutable(name, "node", dir, "--import", "tsx", ...)`, not
+  `AddJavaScriptApp`.** `Aspire.Hosting.JavaScript@13.5.4` does exist, but `node` directly is one
+  process with no package-manager detection to get wrong, and the brief blessed the fallback.
+  Revisit when a Vite/Next resource needs dev-server handling.
+- **Node endpoints are `isProxied: false`.** A DCP proxy binds loopback only, and Traefik reaches
+  these services from inside a container over the docker host gateway. Consequence: the services
+  bind `HOST=0.0.0.0`.
+- **`apphost.run.json`'s `http` profile is first, and its ports are pinned** — dashboard 15230,
+  OTLP 19071, resource service 20005. §8.1 said "template defaults", but `aspire new` randomises
+  them per scaffold, so they are not a fixed set. Plain HTTP because the OTLP gRPC exporter would
+  otherwise need Aspire's self-signed dev cert in Node's trust store. **AppHost B: 15240 / 19081 /
+  20015.**
+- **`ConnectionStrings__*` is wired but not read.** `WithReference` gives the dependency edge and
+  the dashboard entry; `DATABASE_URL` is built separately as a `postgres://` URL for the **app
+  role**, because the string Aspire injects is the superuser's and a superuser bypasses RLS (BE2).
+- **The Postgres superuser password is pinned to a literal** rather than left to Aspire's
+  generator, which may produce characters that are not URL-safe.
+- **`dev-seed` seeds a dedicated tenant `zenith` and an unspent installation row**, in the new
+  `packages/db-platform/src/seed-dedicated.ts`. `seed.ts` says zenith is not seeded because
+  provisioning is a real operation (CK1) — still true of the product; `POST /installations` is
+  untouched and task 10 exercises it. This exists so AppHost B has a token to present before
+  anything is running that could issue one. Same rows, same sha256 hashing, fixed input:
+  `mercatus-dev-bootstrap-token-for-zenith-001`.
+- **`PLATFORM_DATABASE_ADMIN_URL ?? DATABASE_ADMIN_URL`** in db-platform's `migrate.ts`, `seed.ts`
+  and `seed-dedicated.ts`, added to `turbo.json`'s `migrate` env list. One `dev-seed` process
+  seeds two databases, and one variable cannot name both — the same fix task 04a made with
+  `PLATFORM_DATABASE_URL`.
+- **OpenTelemetry is a runtime preload, not an application import.**
+  `packages/core/src/telemetry.ts` is loaded by the AppHost with `--import`, before the app's
+  module graph evaluates, because instrumentation patches modules as they load and importing it
+  from `index.ts` would be too late for `fastify` and `postgres` — silently, with an empty
+  dashboard. No endpoint in the environment means it does nothing, so a hand-started service or a
+  test dials nothing.
+- **No fastify instrumentation.** `@opentelemetry/instrumentation-fastify` is deprecated in favour
+  of `@fastify/otel`, a plugin every app would have to register, and all it adds is a span per
+  hook. `instrumentation-http` + `instrumentation-pg` give the server span and the query under it.
