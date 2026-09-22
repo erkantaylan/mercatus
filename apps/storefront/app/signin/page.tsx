@@ -9,15 +9,10 @@
 import Link from 'next/link';
 
 import { SignInForm } from '@/components/SignInForm';
-import { readShopperSession } from '@/lib/session';
+import { safeNext } from '@/lib/next-path';
+import { readShopperSession, shopperLabel } from '@/lib/session';
 
 export const dynamic = 'force-dynamic';
-
-/** Same-site paths only. Anything else -- a scheme, a host, a protocol-relative `//` -- is home. */
-function safeNext(value: string | undefined): string {
-  if (!value || !value.startsWith('/') || value.startsWith('//')) return '/';
-  return value;
-}
 
 export default async function SignInPage({
   searchParams,
@@ -39,11 +34,16 @@ export default async function SignInPage({
         <div className="sf-page-header">
           <h1>Sign in</h1>
           <p className="sf-muted">
-            One account for every shop on this platform. Your phone number is who you are; the
-            store you are buying from comes from the address bar, and the store API applies both.
+            One account for every shop on this platform. The identity provider says who you are;
+            the store you are buying from comes from the address bar, and the store API applies
+            both.
           </p>
         </div>
-        <SignInForm next={safeNext(next)} current={session} />
+        <SignInForm
+          next={safeNext(next)}
+          current={session}
+          label={session === null ? null : shopperLabel(session)}
+        />
         <p className="sf-muted" style={{ marginTop: 'var(--mc-space-5)' }}>
           <Link href={safeNext(next)}>Back to the shop</Link>
         </p>

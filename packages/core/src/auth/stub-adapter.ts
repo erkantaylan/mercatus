@@ -128,12 +128,24 @@ export class StubAuthAdapter implements AuthAdapter {
   /**
    * Accepts `stub:staff:<subject>:<tenantSlugOrUuid>` and `stub:shopper:<subject>`.
    * The redirect uri is not checked -- there is no registered client to check it against.
+   *
+   * THE SUBJECT IS PERCENT-ENCODED. Both of this repo's stub subjects contain a colon
+   * (`dev-staff:acme`, `dev-shopper:+905550000001`), which a naive `split(':')` silently truncates
+   * to `dev-staff` -- so the first real sign-in through the stub's own authorization page signed
+   * everybody in as the same person. Decoding is a no-op for a subject that needs no escaping, so
+   * a hand-written `stub:staff:user-1:<uuid>` still means exactly what it says.
    */
   async exchange(params: ExchangeParams): Promise<ExchangeResult> {
     const parts = params.code.split(':');
-    const [prefix, kind, subject, tenantRef] = parts;
-    if (prefix !== 'stub' || !subject) {
+    const [prefix, kind, rawSubject, tenantRef] = parts;
+    if (prefix !== 'stub' || !rawSubject) {
       throw new ValidationError('Stub authorization codes look like stub:<kind>:<subject>[:<tenant>].');
+    }
+    let subject: string;
+    try {
+      subject = decodeURIComponent(rawSubject);
+    } catch {
+      throw new ValidationError('The subject in that stub code is not decodable.');
     }
 
     if (kind === 'shopper') {

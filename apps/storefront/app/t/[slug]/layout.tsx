@@ -16,7 +16,7 @@ import type { CSSProperties, ReactNode } from 'react';
 import { BasketLink } from '@/components/BasketLink';
 import { getBranding, StoreApiError } from '@/lib/api';
 import { checkoutNotice } from '@/lib/licence';
-import { readShopperSession } from '@/lib/session';
+import { readShopperSession, shopperLabel } from '@/lib/session';
 
 export const dynamic = 'force-dynamic';
 
@@ -73,8 +73,8 @@ export default async function StoreLayout({
             <Link href={`/t/${slug}/orders`}>Orders</Link>
             <BasketLink slug={slug} />
             {session ? (
-              <Link href={`/signin?next=/t/${slug}`} data-shopper={session.phone}>
-                {session.phone}
+              <Link href={`/signin?next=/t/${slug}`} data-shopper={shopperLabel(session)}>
+                {shopperLabel(session)}
               </Link>
             ) : (
               <Link href={`/signin?next=/t/${slug}`} data-shopper="">

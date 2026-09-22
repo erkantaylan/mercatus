@@ -294,7 +294,12 @@ describe('a reported URL is normalised before it is stored or registered', () =>
     // builds its redirect_uri from its own endpoint -- then sent lowercase and got
     // `oidc.invalid_redirect_uri`. Two different strings validated and stored is the bug.
     const app = logto.byName(`Mercatus store (tenant ${slug} / ${body.installationId})`);
-    expect(app?.oidcClientMetadata.redirectUris).toEqual(['http://box.example:8123/auth/callback']);
+    // Every callback this instance can be reached at, on the client that does the exchange --
+    // the store is the only OIDC client on a dedicated box (v2.0.0). None of them uppercase.
+    expect(app?.oidcClientMetadata.redirectUris).toEqual([
+      'http://box.example:8123/auth/callback',
+      'http://box.example:8124/callback',
+    ]);
     expect(uris(DASHBOARD_APP)).toContain('http://box.example:8124/callback');
 
     const listed = await platform!.app.inject({
@@ -408,8 +413,14 @@ describe('an instance that moves says so, and the issuer follows it', () => {
     expect(storefront).not.toContain('http://box.example:9101/api/auth/callback');
 
     // And the instance's OWN client is authoritative, not a union: one installation owns it.
+    // All three of its callbacks moved together, because all three are ITS redirect URIs --
+    // neither front end holds a client secret, so neither can be a client of its own (v2.0.0).
     const own = logto.byName(`Mercatus store (tenant ${slug} / ${live.installationId})`);
-    expect(own?.oidcClientMetadata.redirectUris).toEqual(['http://box.example:9200/auth/callback']);
+    expect(own?.oidcClientMetadata.redirectUris).toEqual([
+      'http://box.example:9200/auth/callback',
+      'http://box.example:9201/api/auth/callback',
+      'http://box.example:9202/callback',
+    ]);
   });
 
   it('refuses a report on a host the installation is not pinned to (GK, S1)', async () => {

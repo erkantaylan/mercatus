@@ -24,8 +24,11 @@ export interface RouterContext {
 
 export const Route = createRootRouteWithContext<RouterContext>()({
   beforeLoad: ({ location }) => {
+    // `/callback` is the one route a signed-OUT browser must be allowed to reach: it is where the
+    // issuer sends the merchant back, and bouncing it to /login would discard the code and loop.
+    const open = location.pathname === '/login' || location.pathname === '/callback';
     const signedIn = session.get() !== null;
-    if (!signedIn && location.pathname !== '/login') throw redirect({ to: '/login' });
+    if (!signedIn && !open) throw redirect({ to: '/login' });
     if (signedIn && location.pathname === '/login') throw redirect({ to: '/products' });
   },
   component: Shell,

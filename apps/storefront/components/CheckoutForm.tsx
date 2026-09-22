@@ -33,7 +33,12 @@ interface CheckoutResponse {
 }
 
 export interface CheckoutSession {
-  readonly phone: string;
+  readonly subject: string;
+  /**
+   * Contact detail, not identity (BI2). Known at sign-in under the stub issuer, whose subject
+   * spells a phone out; unknown under a real issuer, where the form below asks for it once.
+   */
+  readonly phone: string | null;
   readonly name: string | null;
 }
 
@@ -44,13 +49,13 @@ export function CheckoutForm({
 }: {
   slug: string;
   products: readonly Product[];
-  /** Null means a guest: they are asked who they are, and the checkout signs them in. */
+  /** Null means nobody is signed in at this storefront: there is no guest checkout (Q20). */
   session: CheckoutSession | null;
 }) {
   const router = useRouter();
   const [lines, setLines] = useState<BasketLine[] | null>(null);
-  const [phone, setPhone] = useState('+905550000001');
-  const [name, setName] = useState('Dev Shopper');
+  const [phone, setPhone] = useState(session?.phone ?? '');
+  const [name, setName] = useState(session?.name ?? '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -104,9 +109,10 @@ export function CheckoutForm({
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           slug,
-          // A signed-in shopper posts no identity at all: the httpOnly cookie is the identity,
-          // and the route handler reads it (Q20, BI2).
-          ...(session ? {} : { phone, name }),
+          // No identity is ever posted: the httpOnly cookie is the identity, and the route
+          // handler reads it (Q20, BI2). What may be posted is CONTACT DETAIL for the order,
+          // and only when the issuer did not already tell us a phone.
+          ...(session?.phone ? {} : { phone, name }),
           lines: rows.map((row) => ({ productId: row.product.id, qty: row.line.qty })),
         }),
       });
@@ -188,7 +194,12 @@ export function CheckoutForm({
       </table>
 
       <div className="sf-card sf-stack">
-        {session ? (
+        {session === null ? (
+          <p className="sf-muted">
+            <Link href={`/signin?next=/t/${slug}/checkout`}>Sign in</Link> to place this order.
+            One account works at every shop on this platform.
+          </p>
+        ) : session.phone ? (
           <p className="sf-muted" data-shopper={session.phone}>
             Buying as <strong>{session.phone}</strong>
             {session.name ? ` (${session.name})` : null}.{' '}
@@ -196,6 +207,10 @@ export function CheckoutForm({
           </p>
         ) : (
           <>
+            <p className="sf-muted" data-shopper={session.subject}>
+              Signed in as <strong>{session.subject}</strong>. The store needs a phone number to
+              put on the order.
+            </p>
             <div className="sf-field">
               <label htmlFor="phone">Phone</label>
               <input
@@ -208,7 +223,7 @@ export function CheckoutForm({
                 }}
               />
               <span className="sf-hint">
-                E.164, e.g. +905550000001. One account, every shop on this platform.
+                E.164, e.g. +905550000001. Contact detail for this order, not your account.
               </span>
             </div>
 
@@ -229,7 +244,7 @@ export function CheckoutForm({
         {error ? <p className="sf-error">{error}</p> : null}
 
         <div className="sf-row">
-          <button className="sf-button" type="submit" disabled={busy}>
+          <button className="sf-button" type="submit" disabled={busy || session === null}>
             {busy ? 'Placing the order…' : `Pay ${formatMoney(total, currency)}`}
           </button>
           <span className="sf-hint">You will be sent to fake-bank to complete the payment.</span>

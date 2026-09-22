@@ -59,6 +59,10 @@ export async function buildStoreApp(config: StoreConfig): Promise<StoreApp> {
           stub: {
             secret: config.authStubSecret,
             nodeEnv: config.nodeEnv,
+            // Where `/auth/login` sends the browser under the stub: this store's own sign-in
+            // page. It has to be absolute and it has to be the address the BROWSER can reach,
+            // which is the same variable the OIDC redirect URIs are built from (lessons/14).
+            devLoginUrl: `${(config.storePublicUrl ?? `http://localhost:${String(config.port)}`).replace(/\/+$/, '')}/dev/login`,
             // Lets a stub authorization code name a tenant by slug instead of by uuid. The
             // adapter cannot know the tenants table, and a hard-coded uuid per slug would put a
             // lie in the auth path.

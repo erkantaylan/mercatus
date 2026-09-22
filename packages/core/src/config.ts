@@ -77,6 +77,21 @@ const storeEnvSchema = z
     /** Absolute, browser-visible base URL of this store -- the OIDC redirect_uri is built on it. */
     STORE_PUBLIC_URL: z.url().optional(),
 
+    /**
+     * The two BROWSER-FACING surfaces this store signs people in for (v2.0.0).
+     *
+     * The store is the only OIDC client in the topology -- it is the one process holding a client
+     * secret -- so when the storefront or the dashboard starts a login, the code still has to come
+     * back to a place the issuer was told about. These are those places, and they are the same
+     * two URLs the instance reports at registration, so the URI that is REGISTERED and the URI
+     * that is SENT come from one variable (lessons/14: Logto matches redirect_uri as a string).
+     *
+     * Absent means that surface cannot start a login here, and `/auth/login?via=...` says so
+     * rather than sending the browser at a URL the issuer will refuse.
+     */
+    STOREFRONT_PUBLIC_URL: z.url().optional(),
+    DASHBOARD_PUBLIC_URL: z.url().optional(),
+
     /** The DNS suffix this deployment answers on, for host-based tenant resolution (§3.6). */
     BASE_HOST: z.string().min(1).default('localtest.me'),
 
@@ -159,6 +174,10 @@ export interface StoreConfig {
   readonly sessionSecret: string;
   readonly sessionTtlSeconds: number;
   readonly storePublicUrl: string | undefined;
+  /** Where the shopper-facing front end answers; `${it}/api/auth/callback` is its redirect URI. */
+  readonly storefrontPublicUrl: string | undefined;
+  /** Where the merchant dashboard answers; `${it}/callback` is its redirect URI. */
+  readonly dashboardPublicUrl: string | undefined;
   readonly baseHost: string;
   readonly platformUrl: string | undefined;
   /** The payment provider's base URL. Read-only, and never a credential (CE2). */
@@ -205,6 +224,8 @@ export function loadStoreConfig(env: EnvSource = process.env): StoreConfig {
     sessionSecret: value.SESSION_SECRET ?? value.AUTH_STUB_SECRET ?? '',
     sessionTtlSeconds: value.SESSION_TTL_SECONDS,
     storePublicUrl: value.STORE_PUBLIC_URL,
+    storefrontPublicUrl: value.STOREFRONT_PUBLIC_URL,
+    dashboardPublicUrl: value.DASHBOARD_PUBLIC_URL,
     baseHost: value.BASE_HOST,
     platformUrl: value.PLATFORM_URL,
     fakeBankUrl: value.FAKE_BANK_URL,

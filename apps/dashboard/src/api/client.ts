@@ -13,8 +13,8 @@
  */
 import {
   deleteResultSchema,
-  devLoginResultSchema,
   errorEnvelopeSchema,
+  exchangeResultSchema,
   licenceViewSchema,
   orderDetailSchema,
   orderListSchema,
@@ -22,7 +22,7 @@ import {
   productSchema,
   settingsSchema,
   type CreateProductBody,
-  type DevLoginResult,
+  type ExchangeResult,
   type LicenceView,
   type OrderDetail,
   type OrderList,
@@ -56,7 +56,12 @@ export class ApiError extends Error {
 }
 
 export interface StoreClient {
-  signInStaff(input: { slug: string; role: 'owner' | 'staff' }): Promise<DevLoginResult>;
+  /**
+   * Finish an interactive sign-in. The dashboard never holds a client secret, so the STORE does
+   * the code exchange and hands back the session it signed; this app presents that as a bearer,
+   * exactly as it presented the old dev token. One call, both adapters.
+   */
+  exchange(input: { code: string; state: string }): Promise<ExchangeResult>;
   listProducts(): Promise<ProductList>;
   getProduct(id: string): Promise<Product>;
   createProduct(body: CreateProductBody): Promise<Product>;
@@ -108,8 +113,7 @@ export function createStoreClient(getToken: () => string | null): StoreClient {
   }
 
   return {
-    // The stub adapter's dev route. The Identity phase replaces this call and nothing else here.
-    signInStaff: (input) => request('POST', '/dev/login/staff', devLoginResultSchema, input),
+    exchange: (input) => request('POST', '/auth/exchange', exchangeResultSchema, input),
 
     // No tenant appears in any path below: the staff token names it, and the store refuses a
     // request whose host or path disagrees (BI1).

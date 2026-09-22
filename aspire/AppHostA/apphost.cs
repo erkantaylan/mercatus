@@ -445,6 +445,15 @@ var adminUrl = admin.GetEndpoint("http");
 
 storefront.WithEnvironment("STOREFRONT_PUBLIC_URL", storefrontUrl);
 
+// The store is the only OIDC client here, so it is the store that has to know where the two
+// browser-facing surfaces answer: `/auth/login?via=storefront|dashboard` builds the redirect URI
+// from these, and identity registers the very same strings. One variable per surface is what
+// keeps the URI that is SENT and the URI that is REGISTERED from ever being two spellings of the
+// same address (lessons/14).
+storePooled
+    .WithEnvironment("STOREFRONT_PUBLIC_URL", storefrontUrl)
+    .WithEnvironment("DASHBOARD_PUBLIC_URL", dashboardUrl);
+
 edgeConfig
     .WithEnvironment("MERCATUS_EP_STOREFRONT", storefrontUrl)
     .WithEnvironment("MERCATUS_EP_DASHBOARD", dashboardUrl)

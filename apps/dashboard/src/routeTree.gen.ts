@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as CallbackRouteImport } from './routes/callback'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as OrdersIndexRouteImport } from './routes/orders.index'
@@ -21,6 +22,11 @@ import { Route as ProductsNewRouteImport } from './routes/products.new'
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CallbackRoute = CallbackRouteImport.update({
+  id: '/callback',
+  path: '/callback',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LoginRoute = LoginRouteImport.update({
@@ -61,6 +67,7 @@ const ProductsNewRoute = ProductsNewRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/callback': typeof CallbackRoute
   '/login': typeof LoginRoute
   '/settings': typeof SettingsRoute
   '/orders/$id': typeof OrdersIdRoute
@@ -71,6 +78,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/callback': typeof CallbackRoute
   '/login': typeof LoginRoute
   '/settings': typeof SettingsRoute
   '/orders/$id': typeof OrdersIdRoute
@@ -82,6 +90,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/callback': typeof CallbackRoute
   '/login': typeof LoginRoute
   '/settings': typeof SettingsRoute
   '/orders/$id': typeof OrdersIdRoute
@@ -94,6 +103,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/callback'
     | '/login'
     | '/settings'
     | '/orders/$id'
@@ -104,6 +114,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/callback'
     | '/login'
     | '/settings'
     | '/orders/$id'
@@ -114,6 +125,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/callback'
     | '/login'
     | '/settings'
     | '/orders/$id'
@@ -125,6 +137,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  CallbackRoute: typeof CallbackRoute
   LoginRoute: typeof LoginRoute
   SettingsRoute: typeof SettingsRoute
   OrdersIdRoute: typeof OrdersIdRoute
@@ -141,6 +154,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/callback': {
+      id: '/callback'
+      path: '/callback'
+      fullPath: '/callback'
+      preLoaderRoute: typeof CallbackRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/login': {
@@ -197,6 +217,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  CallbackRoute: CallbackRoute,
   LoginRoute: LoginRoute,
   SettingsRoute: SettingsRoute,
   OrdersIdRoute: OrdersIdRoute,

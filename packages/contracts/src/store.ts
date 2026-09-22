@@ -252,11 +252,55 @@ export const startLoginQuerySchema = z.object({
   slug: slugSchema.optional(),
   /** Where to send the browser once the session cookie is set. Must be a relative path. */
   next: z.string().startsWith('/').default('/'),
+  /**
+   * WHICH BROWSER-FACING SURFACE STARTED THIS LOGIN, and therefore where the issuer must send the
+   * code back to (v2.0.0).
+   *
+   * `store` -- the default and the old behaviour -- lands on this API's own `/auth/callback` and
+   * ends with the store's session cookie. The two shell gates in `packages/identity/scripts` use
+   * it, as does anything driving the store directly.
+   *
+   * `storefront` and `dashboard` land on a front end, which then presents the code to
+   * `POST /auth/exchange` and is handed the session token instead. The store stays the only OIDC
+   * client in the topology -- neither front end holds a client secret -- and the three landing
+   * places are exactly the three redirect URIs registered for this installation.
+   */
+  via: z.enum(['store', 'storefront', 'dashboard']).default('store'),
 });
 
 export const loginCallbackQuerySchema = z.object({
   code: z.string().min(1),
   state: z.string().min(1),
+});
+
+/**
+ * `POST /auth/exchange` -- the same round trip as `/auth/callback`, for a caller that wants the
+ * session as a TOKEN rather than as a cookie.
+ *
+ * A storefront on its own origin, and a dashboard SPA on a third, cannot be sent this store's
+ * host-only cookie. They hold the token instead and send it as a bearer, which the auth hook
+ * verifies against the very same key (`packages/core/src/auth/plugin.ts`).
+ */
+export const exchangeBodySchema = z.object({
+  code: z.string().min(1),
+  state: z.string().min(1),
+});
+
+export const exchangeResultSchema = z.object({
+  accessToken: z.string(),
+  expiresAt: z.number().int().positive(),
+  kind: z.enum(['staff', 'shopper']),
+  subject: z.string(),
+  tenantId: z.uuid().nullable(),
+  /** The slug for `tenantId`, so a dashboard need not look one up to name the store it is in. */
+  tenantSlug: slugSchema.nullable(),
+  roles: z.array(z.enum(['owner', 'staff'])),
+  /** Contact detail the issuer knew, when it knew one. Never an identity (BI2). */
+  phone: phoneSchema.nullable(),
+  name: z.string().nullable(),
+  /** Echoed back from the signed state, so the front end need not carry it through the issuer. */
+  next: z.string().startsWith('/'),
+  issuedBy: z.enum(['stub', 'oidc']),
 });
 
 /* ------------------------------------------------------------------- inferred */
@@ -287,3 +331,5 @@ export type DevLoginResult = z.infer<typeof devLoginResultSchema>;
 export type SessionInfo = z.infer<typeof sessionInfoSchema>;
 export type StartLoginQuery = z.infer<typeof startLoginQuerySchema>;
 export type LoginCallbackQuery = z.infer<typeof loginCallbackQuerySchema>;
+export type ExchangeBody = z.infer<typeof exchangeBodySchema>;
+export type ExchangeResult = z.infer<typeof exchangeResultSchema>;

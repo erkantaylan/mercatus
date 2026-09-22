@@ -8,7 +8,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 
 import { ApiError, createStoreClient } from './api/client.js';
-import { createStubAuthAdapter } from './auth/adapter.js';
+import { createAuthAdapter } from './auth/adapter.js';
 import { session } from './auth/session.js';
 import { createAppRouter } from './router.js';
 
@@ -19,7 +19,7 @@ import '@mercatus/ui/tokens.css';
 import './styles/app.css';
 
 const client = createStoreClient(() => session.token());
-const adapter = createStubAuthAdapter(client);
+const adapter = createAuthAdapter(client);
 
 const queryClient = new QueryClient({
   queryCache: new QueryCache({

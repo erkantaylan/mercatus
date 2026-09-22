@@ -1,10 +1,12 @@
 /**
- * The sign-in form. It posts to this app's own `/api/session`, which mints the token and writes
- * the httpOnly cookie -- the browser never holds the bearer token, here or anywhere else.
+ * The sign-in panel.
  *
- * `router.replace` plus `router.refresh()` after a successful sign-in: the pages that show who is
- * signed in are server components, so the cookie only becomes visible to them once the router
- * cache is dropped.
+ * It is a LINK, not a form: signing in is a round trip to the issuer, so the browser has to leave
+ * this origin. Under `AUTH_ADAPTER=stub` it lands on the store's own dev sign-in page, which asks
+ * for a phone number and nothing else; under `oidc` it lands on Logto. Neither page belongs to
+ * this app, and that is the point -- one path, both adapters.
+ *
+ * Sign-out is still a button, because it is a request to this app and not a navigation to another.
  */
 'use client';
 
@@ -12,48 +14,23 @@ import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 
 interface Session {
-  readonly phone: string;
+  readonly subject: string;
+  readonly phone: string | null;
   readonly name: string | null;
 }
 
-interface SessionResponse {
-  phone?: unknown;
-  error?: { code?: unknown; message?: unknown };
-}
-
-export function SignInForm({ next, current }: { next: string; current: Session | null }) {
+export function SignInForm({
+  next,
+  current,
+  label,
+}: {
+  next: string;
+  current: Session | null;
+  /** How the store names this person: their phone when it knows one, the subject otherwise. */
+  label: string | null;
+}) {
   const router = useRouter();
-  const [phone, setPhone] = useState(current?.phone ?? '+905550000001');
-  const [name, setName] = useState(current?.name ?? 'Dev Shopper');
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function submit(event: React.FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
-    setBusy(true);
-    setError(null);
-    try {
-      const response = await fetch('/api/session', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ phone, name }),
-      });
-      const payload = (await response.json()) as SessionResponse;
-      if (!response.ok || typeof payload.phone !== 'string') {
-        const code = typeof payload.error?.code === 'string' ? payload.error.code : 'UNKNOWN';
-        const message =
-          typeof payload.error?.message === 'string' ? payload.error.message : 'Sign-in failed.';
-        setError(`${code}: ${message}`);
-        setBusy(false);
-        return;
-      }
-      router.replace(next);
-      router.refresh();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Sign-in failed.');
-      setBusy(false);
-    }
-  }
 
   async function signOut(): Promise<void> {
     setBusy(true);
@@ -62,61 +39,36 @@ export function SignInForm({ next, current }: { next: string; current: Session |
     router.refresh();
   }
 
+  const href = `/api/auth/login?next=${encodeURIComponent(next)}`;
+
   return (
-    <form className="sf-stack" onSubmit={(event) => void submit(event)}>
-      <div className="sf-card sf-stack">
+    <div className="sf-card sf-stack">
+      {current && label ? (
+        <p className="sf-muted" data-signed-in-as={label}>
+          Signed in as <strong>{label}</strong>. Signing in again replaces the session.
+        </p>
+      ) : (
+        <p className="sf-muted">
+          You will be sent to the identity provider and brought straight back here.
+        </p>
+      )}
+
+      <div className="sf-row">
+        {/* A plain anchor, not next/link: this leaves the app entirely. */}
+        <a className="sf-button" href={href} data-signin-start="1">
+          {current ? 'Sign in as someone else' : 'Sign in'}
+        </a>
         {current ? (
-          <p className="sf-muted" data-signed-in-as={current.phone}>
-            Signed in as <strong>{current.phone}</strong>. Signing in again replaces the session.
-          </p>
-        ) : null}
-
-        <div className="sf-field">
-          <label htmlFor="phone">Phone</label>
-          <input
-            id="phone"
-            name="phone"
-            className="sf-input"
-            value={phone}
-            required
-            onChange={(event) => {
-              setPhone(event.target.value);
-            }}
-          />
-          <span className="sf-hint">E.164, e.g. +905550000001.</span>
-        </div>
-
-        <div className="sf-field">
-          <label htmlFor="name">Name</label>
-          <input
-            id="name"
-            name="name"
-            className="sf-input"
-            value={name}
-            onChange={(event) => {
-              setName(event.target.value);
-            }}
-          />
-        </div>
-
-        {error ? <p className="sf-error">{error}</p> : null}
-
-        <div className="sf-row">
-          <button className="sf-button" type="submit" disabled={busy}>
-            {busy ? 'Signing in…' : 'Sign in'}
+          <button
+            className="sf-button sf-button-quiet"
+            type="button"
+            disabled={busy}
+            onClick={() => void signOut()}
+          >
+            Sign out
           </button>
-          {current ? (
-            <button
-              className="sf-button sf-button-quiet"
-              type="button"
-              disabled={busy}
-              onClick={() => void signOut()}
-            >
-              Sign out
-            </button>
-          ) : null}
-        </div>
+        ) : null}
       </div>
-    </form>
+    </div>
   );
 }

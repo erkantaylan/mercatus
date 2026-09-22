@@ -235,9 +235,17 @@ export class IdentityProvisioner {
     const { client, credential } = resolved;
     const uris = callbacks(input.urls);
 
+    // ALL THREE CALLBACKS GO ON THIS INSTANCE'S OWN CLIENT (v2.0.0). The store is the only OIDC
+    // client on a dedicated box -- the storefront and the dashboard hold no secret and could not
+    // authenticate as one -- so `${storefront}/api/auth/callback` and `${dashboard}/callback` are
+    // redirect URIs of the STORE's client. Written authoritatively (lessons/16): this application
+    // has exactly one owner, so a restarted box on a new Aspire-assigned port replaces its list
+    // rather than growing it.
     const installation = await ensureInstallationClient(client, {
       name: installationApplicationName(input.tenantSlug, input.installationId),
-      redirectUris: uris.store === null ? [] : [uris.store],
+      redirectUris: [uris.store, uris.storefront, uris.dashboard].filter(
+        (uri): uri is string => uri !== null,
+      ),
       postLogoutRedirectUris: uris.storefrontRoot === null ? [] : [uris.storefrontRoot],
     });
     // Before the shared applications, before the organization lookup, before anything that can

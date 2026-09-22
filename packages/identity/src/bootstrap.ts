@@ -113,7 +113,16 @@ async function main(): Promise<void> {
       key: 'store-pooled',
       name: APPLICATION_NAMES.storePooled,
       type: 'Traditional',
-      redirectUris: [`${storePooledUrl}/auth/callback`],
+      // ALL THREE PLACES A BROWSER CAN LAND, on the one client that does the exchange (v2.0.0).
+      // The store is the only OIDC client in this topology: it is the only process that holds a
+      // client secret, so the storefront's and the dashboard's callbacks are ITS redirect URIs,
+      // not those of two clients neither front end could authenticate as. The dedicated plane's
+      // equivalent is `callbacks()` in apps/platform/src/identity.ts.
+      redirectUris: [
+        `${storePooledUrl}/auth/callback`,
+        `${storefrontUrl}/api/auth/callback`,
+        `${dashboardUrl}/callback`,
+      ],
       postLogoutRedirectUris: [`${storefrontUrl}/`],
     },
     {

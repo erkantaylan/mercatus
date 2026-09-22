@@ -137,6 +137,20 @@ export function registerAuthContext(app: FastifyInstance, options: AuthContextOp
     const token = bearer(req.headers.authorization);
     req.principal = token ? await options.adapter.verify(token) : null;
 
+    if (token && !req.principal && options.session) {
+      // THE STORE'S OWN SESSION, PRESENTED AS A BEARER TOKEN (v2.0.0).
+      //
+      // It is the same credential as the cookie below, signed by this process and verified by
+      // this process; only the transport differs. A browser front end on another origin cannot
+      // be sent this store's host-only cookie, so without this the merchant dashboard would have
+      // to fall back to a `/dev/login/*` route -- which is exactly the hole that made "real OIDC"
+      // and "a shopping demo" mutually exclusive before this release.
+      //
+      // The adapter is asked FIRST, so an issuer-minted token still wins and nothing about the
+      // trust boundary moves: a session we did not sign does not verify here either.
+      req.principal = await options.session.verify(token);
+    }
+
     if (token && !req.principal) {
       // S1: the client gets one generic failure from whichever route needs auth. The reason the
       // token did not verify is logged here and goes no further.

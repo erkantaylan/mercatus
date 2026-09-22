@@ -313,6 +313,13 @@ provision
     .WithEnvironment("STOREFRONT_PUBLIC_URL", storefrontUrl)
     .WithEnvironment("DASHBOARD_PUBLIC_URL", dashboard.GetEndpoint("http"));
 
+// And the STORE gets the same two, because the store is the only OIDC client on this box: it is
+// the one process holding a client secret, so `/auth/login?via=storefront|dashboard` builds its
+// redirect_uri from these. Same variables, same strings, same spelling as what was registered.
+store
+    .WithEnvironment("STOREFRONT_PUBLIC_URL", storefrontUrl)
+    .WithEnvironment("DASHBOARD_PUBLIC_URL", dashboard.GetEndpoint("http"));
+
 // ---------------------------------------------------------------------------------------------
 // This box's half of the address book (see AppHostA for the other).
 //

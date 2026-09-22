@@ -20,21 +20,15 @@ import { z } from 'zod';
 
 import { checkout, StoreApiError } from '@/lib/api';
 import { createPayment, recordUnreachable } from '@/lib/payments';
-import {
-  mintShopperToken,
-  readShopperSession,
-  readShopperToken,
-  sessionCookies,
-} from '@/lib/session';
+import { readShopperSession, readShopperToken, sessionCookies } from '@/lib/session';
 
 const bodySchema = z.object({
   slug: z
     .string()
     .regex(/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/)
     .max(63),
-  // Optional, because a shopper who signed in already HAS an identity: the session's token is the
-  // subject and the session's phone is the contact detail. A phone here is a sign-in and a
-  // checkout in one request, which is what a guest does.
+  // Contact detail for this order, never an identity (BI2). Optional because the stub issuer's
+  // subject already spells a phone out; a real issuer's does not, so the checkout form asks.
   phone: z.string().regex(/^\+[1-9]\d{6,14}$/, 'A phone number in E.164 form.').optional(),
   name: z.string().max(120).optional(),
   lines: z.array(z.object({ productId: z.uuid(), qty: z.number().int().positive() })).min(1),
@@ -50,34 +44,35 @@ export async function POST(request: Request): Promise<Response> {
   }
   const { slug, lines } = parsed.data;
 
-  // The session comes first: a shopper who signed in buys as themselves, at every store this
-  // process serves, without being asked who they are again (Q20). A posted phone signs a guest in
-  // on the spot, which is the same two calls in one request.
+  // The session IS the identity. There is no guest path any more and there cannot be one: this
+  // app holds no client secret, so the only way to a shopper token is the issuer round trip
+  // (/api/auth/login -> /api/auth/callback). A shopper who signed in buys as themselves at every
+  // store this process serves, without being asked who they are again (Q20).
   const existing = await readShopperSession();
-  const existingToken = await readShopperToken();
-  const phone = parsed.data.phone ?? existing?.phone;
-  const name = parsed.data.name ?? existing?.name ?? undefined;
+  const token = await readShopperToken();
 
-  if (phone === undefined) {
+  if (existing === null || token === undefined) {
     return Response.json(
       { error: { code: 'UNAUTHENTICATED', message: 'Sign in before checking out.' } },
       { status: 401 },
     );
   }
 
-  const reuse = existingToken !== undefined && parsed.data.phone === undefined;
-  let token: string;
-  if (reuse && existingToken !== undefined) {
-    token = existingToken;
-  } else {
-    try {
-      token = await mintShopperToken(phone);
-    } catch {
-      return Response.json(
-        { error: { code: 'UNAUTHENTICATED', message: 'Could not start a shopper session.' } },
-        { status: 502 },
-      );
-    }
+  // Contact detail for the order. The posted value wins, because it is what the shopper just
+  // typed; the session's is what a previous order taught us.
+  const phone = parsed.data.phone ?? existing.phone ?? undefined;
+  const name = parsed.data.name ?? existing.name ?? undefined;
+
+  if (phone === undefined) {
+    return Response.json(
+      {
+        error: {
+          code: 'VALIDATION_FAILED',
+          message: 'This store needs a phone number to put on the order.',
+        },
+      },
+      { status: 400 },
+    );
   }
 
   let placed: CheckoutResult;
@@ -133,7 +128,7 @@ export async function POST(request: Request): Promise<Response> {
       amountMinor: placed.totalMinor,
       currency: placed.currency,
     });
-    for (const cookie of sessionCookies(token, { phone, name: name ?? null })) {
+    for (const cookie of sessionCookies(token, { subject: existing.subject, phone, name: name ?? null })) {
       response.headers.append('set-cookie', cookie);
     }
     return response;
@@ -146,7 +141,7 @@ export async function POST(request: Request): Promise<Response> {
     currency: placed.currency,
     paymentUrl,
   });
-  for (const cookie of sessionCookies(token, { phone, name: name ?? null })) {
+  for (const cookie of sessionCookies(token, { subject: existing.subject, phone, name: name ?? null })) {
     response.headers.append('set-cookie', cookie);
   }
   return response;

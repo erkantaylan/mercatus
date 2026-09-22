@@ -17,11 +17,13 @@
  */
 import {
   errorEnvelopeSchema,
+  exchangeBodySchema,
+  exchangeResultSchema,
   loginCallbackQuerySchema,
   sessionInfoSchema,
   startLoginQuerySchema,
 } from '@mercatus/contracts';
-import type { MercatusServer } from '@mercatus/core';
+import type { MercatusServer, Principal } from '@mercatus/core';
 import { UnauthenticatedError, ValidationError } from '@mercatus/core';
 import { SignJWT, jwtVerify } from 'jose';
 import { z } from 'zod';
@@ -37,9 +39,44 @@ const stateClaimsSchema = z.object({
   redirectUri: z.url(),
 });
 
-/** The absolute URL the issuer redirects back to. It must match what was registered with it. */
-function callbackUrl(deps: StoreDeps, requestOrigin: string): string {
+/**
+ * The absolute URL the issuer redirects back to. It must match what was registered with it, as a
+ * STRING (lessons/14), which is why every one of these is built from the same variable the
+ * instance reported at registration rather than from anything this request carries.
+ *
+ * Three landing places, one client. `store` ends here with a cookie; the other two end at a front
+ * end which presents the code to `POST /auth/exchange` and holds the session as a token instead.
+ */
+function callbackUrl(deps: StoreDeps, via: 'store' | 'storefront' | 'dashboard', requestOrigin: string): string {
+  if (via === 'storefront') {
+    const base = deps.config.storefrontPublicUrl;
+    if (base === undefined) {
+      throw new ValidationError('This store has no storefront to sign in for.', {
+        logDetail: 'STOREFRONT_PUBLIC_URL is not set; /auth/login?via=storefront cannot be served',
+      });
+    }
+    return `${base.replace(/\/+$/, '')}/api/auth/callback`;
+  }
+  if (via === 'dashboard') {
+    const base = deps.config.dashboardPublicUrl;
+    if (base === undefined) {
+      throw new ValidationError('This store has no dashboard to sign in for.', {
+        logDetail: 'DASHBOARD_PUBLIC_URL is not set; /auth/login?via=dashboard cannot be served',
+      });
+    }
+    return `${base.replace(/\/+$/, '')}/callback`;
+  }
   return `${deps.config.storePublicUrl ?? requestOrigin}/auth/callback`;
+}
+
+/** The contact details the issuer knew, when the subject spells them out. Never an identity. */
+function contactOf(principal: Principal): { phone: string | null; name: string | null } {
+  // The stub's shopper subject is `dev-shopper:+90...`, which is where the storefront's readable
+  // phone cookie came from before this release. A real issuer's subject is opaque and says
+  // nothing about a phone, so the checkout form asks for one -- which is the honest behaviour
+  // either way: the phone is contact detail on an order, not who the person is (BI2).
+  const match = /^dev-shopper:(\+[1-9]\d{6,14})$/.exec(principal.subject);
+  return { phone: match?.[1] ?? null, name: null };
 }
 
 export function registerAuthRoutes(app: MercatusServer, deps: StoreDeps): void {
@@ -64,7 +101,7 @@ export function registerAuthRoutes(app: MercatusServer, deps: StoreDeps): void {
       },
     },
     async (req, reply) => {
-      const redirectUri = callbackUrl(deps, `${req.protocol}://${req.host}`);
+      const redirectUri = callbackUrl(deps, req.query.via, `${req.protocol}://${req.host}`);
       const state = await signState({
         next: req.query.next,
         audience: req.query.audience,
@@ -83,6 +120,20 @@ export function registerAuthRoutes(app: MercatusServer, deps: StoreDeps): void {
     },
   );
 
+  /** A state this process signed, or one generic refusal for every way it can be wrong (S1). */
+  const readState = async (state: string): Promise<z.infer<typeof stateClaimsSchema>> => {
+    try {
+      const { payload } = await jwtVerify(state, stateKey, {
+        issuer: STATE_ISSUER,
+        algorithms: ['HS256'],
+      });
+      return stateClaimsSchema.parse(payload);
+    } catch {
+      // A state we did not sign, or one that expired. Same answer for both (S1).
+      throw new ValidationError('The login state is not valid; start again at /auth/login.');
+    }
+  };
+
   app.get(
     '/auth/callback',
     {
@@ -94,17 +145,7 @@ export function registerAuthRoutes(app: MercatusServer, deps: StoreDeps): void {
       },
     },
     async (req, reply) => {
-      let claims: z.infer<typeof stateClaimsSchema>;
-      try {
-        const { payload } = await jwtVerify(req.query.state, stateKey, {
-          issuer: STATE_ISSUER,
-          algorithms: ['HS256'],
-        });
-        claims = stateClaimsSchema.parse(payload);
-      } catch {
-        // A state we did not sign, or one that expired. Same answer for both (S1).
-        throw new ValidationError('The login state is not valid; start again at /auth/login.');
-      }
+      const claims = await readState(req.query.state);
 
       const exchanged = await deps.adapter.exchange({
         code: req.query.code,
@@ -144,6 +185,57 @@ export function registerAuthRoutes(app: MercatusServer, deps: StoreDeps): void {
         tenantId: principal.tenantId,
         roles: principal.kind === 'staff' ? [...principal.roles] : [],
         expiresAt: principal.expiresAt,
+        issuedBy: deps.adapter.name,
+      };
+    },
+  );
+
+  /**
+   * THE SAME ROUND TRIP, FOR A FRONT END ON ANOTHER ORIGIN (v2.0.0).
+   *
+   * The storefront is a server on its own host and the dashboard is a SPA on a third; neither can
+   * be sent this store's host-only cookie, and neither may hold a client secret. So they land the
+   * code here and get the session as a TOKEN, which they present as a bearer -- verified by the
+   * very same key that verifies the cookie (packages/core/src/auth/plugin.ts).
+   *
+   * This is what made "real OIDC" and "a browser you can shop in" stop being mutually exclusive:
+   * before it, both front ends could only mint tokens through `/dev/login/*`, which does not exist
+   * unless the adapter is the stub.
+   */
+  app.post(
+    '/auth/exchange',
+    {
+      schema: {
+        summary: 'Exchange an authorization code for this store\'s session token',
+        tags: ['auth'],
+        body: exchangeBodySchema,
+        response: { 200: exchangeResultSchema, 400: errorEnvelopeSchema },
+      },
+    },
+    async (req) => {
+      const claims = await readState(req.body.state);
+      const exchanged = await deps.adapter.exchange({
+        code: req.body.code,
+        redirectUri: claims.redirectUri,
+      });
+      const principal = exchanged.principal;
+      const accessToken = await deps.session.issue(principal);
+      const verified = await deps.session.verify(accessToken);
+      const tenant = principal.tenantId === null ? null : await deps.tenants.byId(principal.tenantId);
+      req.log.info(
+        { kind: principal.kind, subject: principal.subject, adapter: deps.adapter.name, via: claims.audience },
+        'session issued to a front end',
+      );
+      return {
+        accessToken,
+        expiresAt: verified?.expiresAt ?? principal.expiresAt,
+        kind: principal.kind,
+        subject: principal.subject,
+        tenantId: principal.tenantId,
+        tenantSlug: tenant?.slug ?? null,
+        roles: principal.kind === 'staff' ? [...principal.roles] : [],
+        ...contactOf(principal),
+        next: claims.next,
         issuedBy: deps.adapter.name,
       };
     },
