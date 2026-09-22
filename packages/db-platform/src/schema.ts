@@ -109,6 +109,26 @@ export const installations = pgTable('installations', {
   bootstrapTokenHash: text('bootstrap_token_hash'),
   instanceTokenHash: text('instance_token_hash'),
   version: text('version'),
+  /**
+   * HOST PINNING (GK, S1). The one hostname this installation may register itself at, recorded
+   * when the bootstrap token is minted and checked before it is spent. Without it a stolen token
+   * registers `evil.com/auth/callback` as a redirect URI and harvests this tenant's
+   * authorization codes. Nullable only for rows that predate v2.0.0.
+   */
+  expectedHost: text('expected_host'),
+  /**
+   * Where the instance said it lives, at registration. REPORTED, like everything else a box whose
+   * owner has root tells us -- but unlike the counts these are acted on, which is exactly why
+   * `expected_host` gates them.
+   */
+  baseUrl: text('base_url'),
+  dashboardUrl: text('dashboard_url'),
+  storefrontUrl: text('storefront_url'),
+  /**
+   * This instance's OWN Logto application (CE1). It is created at registration and deleted at
+   * deprovisioning (CK1); a dedicated box never holds the pooled plane's client secret.
+   */
+  logtoApplicationId: text('logto_application_id'),
   /** Reported by the heartbeat (CE6). Null until the instance has said which licence it holds. */
   licenceId: uuid('licence_id'),
   lastSeenAt: timestamp('last_seen_at', { withTimezone: true }),

@@ -13,9 +13,13 @@
  *
  * Applications created through the API are different again: their `applications.secret` column
  * holds a `#internal:` placeholder and the usable secret is at GET /api/applications/:id/secrets.
+ *
+ * NOTHING IN THIS FILE TOUCHES A DATABASE. The one database read -- fact 1 above -- lives in
+ * `management-secret.ts` and is imported only by the bootstrap task, which runs beside Logto on
+ * our own machine. `apps/platform` calls this Management API at runtime (v2.0.0, opt-in
+ * registration) and must reach Logto's Postgres from nowhere: it is a schema we do not own
+ * (CD2), so it gets the M2M secret handed to it as configuration instead.
  */
-import postgres from 'postgres';
-
 /** Resource indicator of the default tenant's Management API in a Logto OSS instance. */
 export const MANAGEMENT_API_RESOURCE = 'https://default.logto.app/api';
 
@@ -33,25 +37,6 @@ export interface LogtoClientOptions {
   readonly adminEndpoint: string;
   readonly clientId: string;
   readonly clientSecret: string;
-}
-
-/** Reads the seeded M2M secret straight out of Logto's database. See the note above. */
-export async function readManagementSecret(databaseUrl: string): Promise<string> {
-  const sql = postgres(databaseUrl, { max: 1 });
-  try {
-    const rows = await sql<{ secret: string }[]>`
-      select secret from applications where id = ${MANAGEMENT_API_APP_ID} limit 1
-    `;
-    const secret = rows[0]?.secret;
-    if (!secret) {
-      throw new LogtoError(
-        `No "${MANAGEMENT_API_APP_ID}" application in this Logto database. Has "logto db seed" run?`,
-      );
-    }
-    return secret;
-  } finally {
-    await sql.end({ timeout: 2 });
-  }
 }
 
 export class LogtoManagementClient {
@@ -121,6 +106,18 @@ export class LogtoManagementClient {
 
   post<T>(path: string, body: unknown): Promise<T> {
     return this.request<T>('POST', path, body);
+  }
+
+  /**
+   * `PATCH /api/applications/:id` with `{oidcClientMetadata:{redirectUris:[...]}}` REPLACES the
+   * list rather than appending to it, so every caller here is a read-modify-write.
+   */
+  patch<T>(path: string, body: unknown): Promise<T> {
+    return this.request<T>('PATCH', path, body);
+  }
+
+  del<T>(path: string): Promise<T> {
+    return this.request<T>('DELETE', path);
   }
 
   /** Polls until Logto answers its own discovery document, or gives up loudly. */

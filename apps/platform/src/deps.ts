@@ -10,6 +10,7 @@ import { createPlatformDb } from '@mercatus/db-platform';
 
 import type { BankClient } from './bank.js';
 import type { PlatformConfig } from './config.js';
+import type { IdentityProvisioner } from './identity.js';
 import type { LicenceSigner } from './licence.js';
 
 export interface PlatformDeps {
@@ -19,6 +20,12 @@ export interface PlatformDeps {
   readonly adapter: AuthAdapter;
   readonly bank: BankClient;
   readonly licences: LicenceSigner;
+  /**
+   * The issuer's Management API, for the moment an instance registers and says where it lives
+   * (v2.0.0). It resolves lazily and may never resolve at all; every route that uses it treats
+   * "identity is not wired up" as a normal answer, not an error.
+   */
+  readonly identity: IdentityProvisioner;
   readonly version: string;
 }
 

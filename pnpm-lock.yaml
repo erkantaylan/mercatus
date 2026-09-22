@@ -436,6 +436,9 @@ importers:
       '@mercatus/db-platform':
         specifier: workspace:*
         version: link:../../packages/db-platform
+      '@mercatus/identity':
+        specifier: workspace:*
+        version: link:../../packages/identity
       fastify:
         specifier: 'catalog:'
         version: 5.12.5

@@ -39,6 +39,16 @@ export const SEED_DEDICATED = {
   name: 'Zenith Tools',
   /** 43 characters, over the contract's `min(32)`. A development literal, never a credential. */
   bootstrapToken: 'mercatus-dev-bootstrap-token-for-zenith-001',
+  /**
+   * HOST PINNING (GK, S1). The token may only ever be spent for a `baseUrl` on this host.
+   *
+   * `localhost`, not `127.0.0.1`, and the spelling is load-bearing all the way through: AppHost B
+   * builds the store's public URL from an Aspire `EndpointReference`, and Aspire renders every
+   * endpoint host as `localhost`. Registering the other spelling of the same socket ends in
+   * `oidc.invalid_redirect_uri` at the issuer (lessons/14). The PORT is not pinned and must not
+   * be -- Aspire assigns it, which is the whole of v2.0.0.
+   */
+  expectedHost: 'localhost',
 } as const;
 
 function oneYearOut(): string {
@@ -95,6 +105,7 @@ export async function seedDedicated(adminUrl: string): Promise<void> {
           id: SEED_DEDICATED.installationId,
           tenantId: SEED_DEDICATED.tenantId,
           bootstrapTokenHash: hashToken(SEED_DEDICATED.bootstrapToken),
+          expectedHost: SEED_DEDICATED.expectedHost,
         });
         process.stdout.write(
           `  seeded ${SEED_DEDICATED.slug} (active, dedicated) + unspent installation\n`,
@@ -110,7 +121,9 @@ export async function seedDedicated(adminUrl: string): Promise<void> {
       }
     });
 
-    process.stdout.write(`  bootstrap token: ${SEED_DEDICATED.bootstrapToken}\n`);
+    process.stdout.write(
+      `  bootstrap token: ${SEED_DEDICATED.bootstrapToken} (host-pinned to ${SEED_DEDICATED.expectedHost})\n`,
+    );
   } finally {
     await close();
   }

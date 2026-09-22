@@ -780,3 +780,53 @@ Decisions taken while putting the dedicated instance on Logto ahead of any regis
   stores, which is the opposite of `login-round-trip.sh`'s one-store-one-jar shape. It asserts both
   halves of the claim: the same subject at both planes, and each store's session cookie refused by
   the other (Q20).
+
+## Phase 1 — opt-in registration (v2.0.0)
+
+- **One Logto application per INSTALLATION, not per tenant.** The plan says "read-modify-write the
+  relevant application's `redirectUris`", which reads as one shared client. A dedicated box's owner
+  has root (`CE5`), so handing it the pooled plane's client secret is the platform-wide secret
+  `CE1` forbids. Keyed on the tenant slug it was also wrong in a way that was *measured*: a second
+  zenith installation took over the first one's application, and `DELETE /installations/:id` on
+  the throwaway would have deleted the live store's client while that box was serving. The
+  dashboard and the storefront stay SHARED clients — they hold no secret a dedicated box keeps —
+  and their per-instance callbacks are added and removed as a set.
+- **The host check runs BEFORE the bootstrap token is burned.** Burning it on a mismatch is
+  defensible (a stolen token used once is dead) but bricks an install on a typo, which is the far
+  more common case. An attacker gains nothing from the retry: they get the same generic 401 and
+  never a credential. Recorded because it is the one place where the one-time-token rule bends.
+- **`expectedHost` is a HOSTNAME, not a host:port and not a URL.** The port is assigned by the
+  instance's own orchestrator and is unknowable when the token is minted; pinning it would
+  re-create the coupling this phase deletes. `expectedHost` is required on `POST /installations`
+  with no default — an operator who cannot name the host has nothing to pin, and an unpinned
+  installation is a redirect URI an attacker chooses.
+- **The M2M credential is a 0600 FILE written by `task-identity-bootstrap`, read lazily by the
+  platform.** The bootstrap gets that secret by reading Logto's own `applications` table; the
+  control plane must not (`CD2`), so it is handed the secret as configuration instead.
+  `readManagementSecret` moved out of `logto.ts` into its own module so that importing the
+  Management API client cannot drag a Postgres driver — and a path into a schema we do not own —
+  into the control plane. Deliberately NOT `platform.WaitForCompletion(logtoBootstrap)`: Logto
+  seeds in 16–40 s and the control plane must be listening in 2 (`CG1`). Four `LOGTO_*` variables
+  are accepted as an alternative for a deployment that keeps the credential in a secret store.
+- **Identity being unavailable is not a failed registration.** The box still gets its installation
+  id, its per-instance token and its licence; it is told `oidc: null` and keeps whatever identity
+  configuration it already had. Same reason: a control plane that refuses to provision because the
+  issuer had a bad afternoon is the failure `CG1` exists to prevent. It is a `warn`, not a 500.
+- **`storefrontUrl` was added alongside the plan's `baseUrl` and `dashboardUrl`.** Three lines, and
+  it closes the `STOREFRONT_DEDICATED_URL` gap phase 0 explicitly left open — without it the
+  bootstrap would have gone on registering `127.0.0.1:3002`, a port nothing has listened on since
+  AppHost B's ports became Aspire-assigned.
+- **The register response carries `organizationId`, and only this tenant's.** The instance needs it
+  to verify an organization token offline from its first request, which is what the handed-over
+  cache file used to provide. That file gave a box somebody else owns the organization directory of
+  *every* tenant we have; one id is strictly less (`CE1`).
+- **`apps/store/src/provision.ts` writes the identity cache, not the store.** The OIDC adapter
+  reads it once, in its constructor. AppHost B already makes the store wait for the install command
+  to finish, so writing it there needs no re-read and no new ordering. It merges rather than
+  overwrites, because the adapter writes its own learned organization/role directory into the same
+  file. The `oidc` block is also kept in `.instance/<slug>.json` so a deleted cache can be rebuilt
+  without spending a bootstrap token that no longer exists.
+- **`DELETE /installations/:id` deletes the row rather than marking it revoked.** The POC has no
+  audit requirement on installations, and a soft-delete would need `listRegisteredInstallations`,
+  the instance-token lookup and the heartbeat all taught to filter — three places to get wrong for
+  a property nothing asks for yet.

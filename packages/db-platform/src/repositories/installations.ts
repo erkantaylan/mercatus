@@ -24,11 +24,15 @@ export function hashToken(token: string): string {
 
 export async function insertInstallation(
   db: PlatformExecutor,
-  input: { tenantId: string; bootstrapTokenHash: string },
+  input: { tenantId: string; bootstrapTokenHash: string; expectedHost: string },
 ): Promise<InstallationRow> {
   const rows = await db
     .insert(installations)
-    .values({ tenantId: input.tenantId, bootstrapTokenHash: input.bootstrapTokenHash })
+    .values({
+      tenantId: input.tenantId,
+      bootstrapTokenHash: input.bootstrapTokenHash,
+      expectedHost: input.expectedHost,
+    })
     .returning();
   const row = rows[0];
   if (!row) throw new Error('insertInstallation returned no row');
@@ -66,7 +70,15 @@ export async function findInstallationByInstanceHash(
  */
 export async function completeRegistration(
   db: PlatformExecutor,
-  input: { bootstrapTokenHash: string; instanceTokenHash: string; version: string },
+  input: {
+    bootstrapTokenHash: string;
+    instanceTokenHash: string;
+    version: string;
+    /** Where the instance says it lives. Host-checked against `expected_host` before we get here. */
+    baseUrl: string;
+    dashboardUrl: string | null;
+    storefrontUrl: string | null;
+  },
 ): Promise<InstallationRow | null> {
   const rows = await db
     .update(installations)
@@ -74,6 +86,9 @@ export async function completeRegistration(
       bootstrapTokenHash: null,
       instanceTokenHash: input.instanceTokenHash,
       version: input.version,
+      baseUrl: input.baseUrl,
+      dashboardUrl: input.dashboardUrl,
+      storefrontUrl: input.storefrontUrl,
       registeredAt: new Date(),
       lastSeenAt: new Date(),
     })
@@ -116,4 +131,38 @@ export async function listRegisteredInstallations(
     .from(installations)
     .where(isNotNull(installations.registeredAt))
     .orderBy(desc(installations.createdAt));
+}
+
+/** By id. Deprovisioning needs the row it is about to undo (CK1). */
+export async function findInstallationById(
+  db: PlatformExecutor,
+  id: string,
+): Promise<InstallationRow | null> {
+  const rows = await db.select().from(installations).where(eq(installations.id, id)).limit(1);
+  return rows[0] ?? null;
+}
+
+/**
+ * The Logto application minted for this instance at registration. Recorded separately from
+ * `completeRegistration` because it is the issuer's id, not ours, and the registration must still
+ * succeed if identity is not wired up at all.
+ */
+export async function setLogtoApplication(
+  db: PlatformExecutor,
+  input: { id: string; logtoApplicationId: string | null },
+): Promise<void> {
+  await db
+    .update(installations)
+    .set({ logtoApplicationId: input.logtoApplicationId })
+    .where(eq(installations.id, input.id));
+}
+
+/**
+ * Deprovisioning (CK1). The row goes; the caller removes the redirect URIs and the instance's own
+ * Logto application first, because an orphaned application is a redirect URI list that grows for
+ * ever and a client secret nobody will ever revoke.
+ */
+export async function deleteInstallation(db: PlatformExecutor, id: string): Promise<boolean> {
+  const rows = await db.delete(installations).where(eq(installations.id, id)).returning();
+  return rows.length > 0;
 }

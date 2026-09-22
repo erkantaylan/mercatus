@@ -58,6 +58,12 @@ export const installationSchema = z.object({
   id: uuidSchema,
   tenantId: uuidSchema,
   tenantSlug: slugSchema,
+  /** The one host this installation may register at (GK). Ours, not reported. */
+  expectedHost: z.string().nullable(),
+  /** Where it said it lives, at registration. Host-checked against `expectedHost` first. */
+  baseUrl: z.url().nullable(),
+  dashboardUrl: z.url().nullable(),
+  storefrontUrl: z.url().nullable(),
   version: z.string().nullable(),
   licenceId: uuidSchema.nullable(),
   productCount: z.number().int().nonnegative(),

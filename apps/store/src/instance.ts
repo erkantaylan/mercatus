@@ -32,6 +32,20 @@ export const instanceCredentialSchema = z.object({
   instanceToken: z.string().min(32),
   tenantId: z.uuid(),
   tenantSlug: z.string().min(2),
+  /**
+   * The issuer client the control plane minted FOR THIS INSTANCE when it registered (v2.0.0).
+   * Ours alone, not the pooled plane's (CE1). It is kept here as well as in the identity cache so
+   * that a deleted cache file can be rebuilt from the credential without spending a bootstrap
+   * token that no longer exists. Absent on a control plane with no issuer wired up.
+   */
+  oidc: z
+    .object({
+      issuer: z.string().min(1),
+      clientId: z.string().min(1),
+      clientSecret: z.string().min(1),
+      organizationId: z.string().min(1).nullable(),
+    })
+    .nullish(),
   registeredAt: z.string().min(1),
 });
 

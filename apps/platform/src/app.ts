@@ -19,6 +19,7 @@ import { createBankClient } from './bank.js';
 import type { PlatformConfig } from './config.js';
 import type { PlatformDeps } from './deps.js';
 import { openDatabase, readVersion } from './deps.js';
+import { IdentityProvisioner } from './identity.js';
 import { createLicenceSigner } from './licence.js';
 import { registerDevLoginRoutes } from './routes/dev-login.js';
 import { registerHealthRoutes } from './routes/health.js';
@@ -66,6 +67,7 @@ export async function buildPlatformApp(
       overrides.bank ??
       createBankClient({ baseUrl: config.fakeBankUrl, secret: config.fakeBankHmacSecret }),
     licences: await createLicenceSigner(config.licenceSigningKey),
+    identity: new IdentityProvisioner(config),
     version: readVersion(),
   };
 

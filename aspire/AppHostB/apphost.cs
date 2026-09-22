@@ -94,12 +94,12 @@ const string BootstrapToken = "mercatus-dev-bootstrap-token-for-zenith-001";
 const string TenantSlug = "zenith";
 const string TenantName = "Zenith Tools";
 
-// The store API is the fourth and last literal in the whole topology, and it is one because
-// AppHost A registers it as an OIDC redirect target (STORE_DEDICATED_URL) before this AppHost has
-// ever run. A's apphost.cs reads the same variable and the same default. The storefront and the
-// dashboard beside it need no such agreement -- they are in THIS model, so they are
-// Aspire-assigned like everything else, and they find the store through its EndpointReference.
-var storePort = Port("MERCATUS_STORE_DEDICATED_PORT", 28403);
+// NOTHING IN THIS FILE IS A FIXED PORT. Until v2.0.0 the store API was: AppHost A had to register
+// it as an OIDC redirect target before this AppHost had ever run, so both models read
+// MERCATUS_STORE_DEDICATED_PORT and agreed on 28403 in advance. That agreement is gone. The store
+// is Aspire-assigned like everything else here, the install command REPORTS the address it was
+// given (`POST /installations/register`), and the control plane registers exactly that. Adding a
+// second dedicated tenant is now zero edits to AppHost A.
 
 var repoRoot = "../..";
 
@@ -107,6 +107,14 @@ var repoRoot = "../..";
 // their working directory inside apps/store -- `pnpm --filter` runs a script with cwd = the
 // package directory -- so one relative path serves both and lands at the repo root.
 var instanceTokenPath = "../../.instance/zenith.json";
+
+// The identity cache: this instance's OIDC client, the issuer's key set, and the one organization
+// that is this tenant. WRITTEN BY THE INSTALL COMMAND from what registration answered -- AppHost A
+// does not write it, does not know this address, and no longer has a second client to hand over.
+//
+// The store's adapter reads this file ONCE, in its constructor, and never again. That is why the
+// store waits for the install command to FINISH and not merely to start.
+var identityCachePath = "../../.identity/store-zenith.json";
 
 var authAdapter = Environment.GetEnvironmentVariable("MERCATUS_AUTH_ADAPTER") is "oidc" ? "oidc" : "stub";
 
@@ -154,23 +162,26 @@ var provision = builder.AddExecutable("task-provision-tenant-zenith", "pnpm", re
     .WithEnvironment("TENANT_NAME", TenantName)
     // Run mode only. A published topology must never invent stock (the sibling of CR1's gate).
     .WithEnvironment("DEV_SEED_CATALOG", builder.ExecutionContext.IsRunMode ? "1" : "0")
+    .WithEnvironment("IDENTITY_CACHE_PATH", identityCachePath)
     .WithReference(controlPlane)
+    .WithReference(identity)
     .WaitForCompletion(migrate);
 
 // ---------------------------------------------------------------------------------------------
 // The apps. The SAME code as the pooled plane, with DEPLOYMENT_MODE=dedicated and one tenant
 // (CC1): no fork, no self-hosted edition, no second code path.
 // ---------------------------------------------------------------------------------------------
-// `port: null` means Aspire allocates. The store passes its own, because A had to be told it in
-// advance; nothing else here does. isProxied:false throughout -- the process binds the port
-// itself, which is what makes the allocated number the number that is actually listening.
+// `port: null` means Aspire allocates -- for EVERY resource here now, the store included.
+// isProxied:false throughout -- the process binds the port itself, which is what makes the
+// allocated number the number that is actually listening, and therefore the number worth
+// reporting to the control plane as a redirect target.
 IResourceBuilder<ExecutableResource> Node(string name, string appDirectory, int? port, params string[] args) =>
     builder.AddExecutable(name, "node", $"{repoRoot}/apps/{appDirectory}", args)
         .WithHttpEndpoint(port: port, targetPort: port, name: "http", env: "PORT", isProxied: false)
         .WithEnvironment("NODE_ENV", "development")
         .WithOtlpExporter();
 
-var store = Node("api-store-tenant-zenith", "store", storePort,
+var store = Node("api-store-tenant-zenith", "store", null,
         // tsx first, so the second preload can BE TypeScript; telemetry second, so the SDK
         // patches http and pg before the application graph is built.
         "--import", "tsx",
@@ -183,7 +194,7 @@ var store = Node("api-store-tenant-zenith", "store", storePort,
     .WithEnvironment("AUTH_ADAPTER", authAdapter)
     .WithEnvironment("AUTH_STUB_SECRET", AuthStubSecret)
     .WithEnvironment("OIDC_ISSUER", $"{IdentityUrl}/oidc")
-    .WithEnvironment("OIDC_JWKS_CACHE_PATH", "../../.identity/store-zenith.json")
+    .WithEnvironment("OIDC_JWKS_CACHE_PATH", identityCachePath)
     .WithEnvironment("SESSION_SECRET", SessionSecret)
     .WithEnvironment("BASE_HOST", "localtest.me")
     // CE4: this box PULLS. One URL out, no route in.
@@ -242,6 +253,25 @@ var dashboard = Node("web-dashboard-tenant-zenith", "dashboard", null,
 
 var storefrontUrl = storefront.GetEndpoint("http");
 storefront.WithEnvironment("STOREFRONT_PUBLIC_URL", storefrontUrl);
+
+// ---------------------------------------------------------------------------------------------
+// v2.0.0: the install command is told where the three surfaces it is about to register ACTUALLY
+// answer. Attached here rather than at the declaration above only because a C# variable has to
+// exist before it can be referenced -- AppHost A does the same for its identity bootstrap.
+//
+// These are EndpointReferences, so the strings are the ones Aspire assigned, spelled the way
+// Aspire spells them (`localhost`). That is the point: Logto matches a redirect_uri as a string,
+// so the address registered as a redirect target has to be character-for-character the address
+// the store will later send as its `redirect_uri` -- and it is, because both come from here
+// (lessons/14). The installation is also HOST-PINNED at the control plane, so a box that reports
+// somewhere else is refused (GK).
+//
+// No WaitFor is created by any of these: the store waits for this task, not the other way round.
+// ---------------------------------------------------------------------------------------------
+provision
+    .WithEnvironment("STORE_PUBLIC_URL", storeUrl)
+    .WithEnvironment("STOREFRONT_PUBLIC_URL", storefrontUrl)
+    .WithEnvironment("DASHBOARD_PUBLIC_URL", dashboard.GetEndpoint("http"));
 
 // This box's half of the address book (see AppHostA for the other). The e2e suite merges the two
 // and skips B's spec when this file is absent, which is the same signal "B is not up" always was.

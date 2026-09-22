@@ -51,12 +51,17 @@ const string PlatformInternalToken = "mercatus-dev-internal-token-0123456789";
 // with whatever else the machine happened to be running -- on the box this was converted, 8080
 // was a reverse proxy and 3001 a markdown server, and neither of them cares what 8.1 claimed.
 //
-// FOUR addresses survive as literals, and they are exactly the ones a SECOND application model has
-// to find without reading this one. AppHost B reaches the control plane and the bank through the
-// edge; the identity issuer is baked into the discovery document and every redirect it hands a
-// browser; and the dedicated store's own address is registered HERE, as a redirect URI, before
-// that store exists. A random port would turn each of those into a lookup across AppHosts, which
-// is the coupling the two-AppHost split exists to prevent (CO3).
+// THREE addresses survive as literals, and they are exactly the ones a SECOND application model
+// has to find without reading this one. AppHost B reaches the control plane and the bank through
+// the edge, and the identity issuer is baked into the discovery document and every redirect it
+// hands a browser. A random port would turn each of those into a lookup across AppHosts, which is
+// the coupling the two-AppHost split exists to prevent (CO3).
+//
+// There were FOUR until v2.0.0. The fourth was the dedicated store's own port, and it was fixed
+// for exactly one reason: its address had to be registered HERE, as an OIDC redirect URI, before
+// that store existed. It does not any more -- the instance registers itself and SAYS where it
+// lives (`POST /installations/register`), and this file does not name it at all. Adding a second
+// dedicated tenant is now zero edits to this file, which is the whole of v2.0.0.
 //
 // They are deliberately unremarkable numbers rather than famous ones, and each takes an override,
 // so a collision is a variable and not a patch:
@@ -64,7 +69,6 @@ const string PlatformInternalToken = "mercatus-dev-internal-token-0123456789";
 //   MERCATUS_EDGE_PORT             the edge; B's control-plane and bank URLs hang off it
 //   MERCATUS_LOGTO_PORT            the OIDC issuer, as the discovery document advertises it
 //   MERCATUS_LOGTO_ADMIN_PORT      where the M2M token is minted
-//   MERCATUS_STORE_DEDICATED_PORT  B's store API -- see AppHostB, which reads the same variable
 // ---------------------------------------------------------------------------------------------
 int Port(string variable, int fallback) =>
     int.TryParse(Environment.GetEnvironmentVariable(variable), out var parsed) ? parsed : fallback;
@@ -77,23 +81,12 @@ var edgeBase = $"http://127.0.0.1:{traefikPort}";
 // container keeps its internal ports; only the host side moves.
 var logtoPort = Port("MERCATUS_LOGTO_PORT", 28311);
 var logtoAdminPort = Port("MERCATUS_LOGTO_ADMIN_PORT", 28312);
-var storeDedicatedPort = Port("MERCATUS_STORE_DEDICATED_PORT", 28403);
 
 var repoRoot = "../..";
 
 var logtoBase = $"http://127.0.0.1:{logtoPort}";
 var logtoAdminBase = $"http://127.0.0.1:{logtoAdminPort}";
 var logtoIssuer = $"{logtoBase}/oidc";
-// `localhost`, not `127.0.0.1`, and the spelling is load-bearing. This string ends up as the
-// dedicated store's REDIRECT URI in Logto, and Logto matches a redirect_uri as a STRING -- an
-// address that resolves to the same socket but is spelled differently is rejected with
-// `oidc.invalid_redirect_uri` at the very end of the round trip. The store builds the redirect_uri
-// it sends from its own STORE_PUBLIC_URL, which in AppHost B is an Aspire EndpointReference, and
-// Aspire renders every endpoint host as `localhost`. So `localhost` is what B will actually ask
-// for, `localhost` is what .stack/apphost-b.json publishes to the e2e suite, and therefore
-// `localhost` is what has to be registered here. Phase 1 deletes this guess: the instance reports
-// its own baseUrl and the platform registers exactly that.
-var storeDedicatedBase = $"http://localhost:{storeDedicatedPort}";
 
 // AUTH_ADAPTER for the data plane. The DEFAULT IS STILL `stub`, deliberately: the dashboard, the
 // admin console and the storefront all sign in through `/dev/login/*`, which exists only while
@@ -209,24 +202,24 @@ var logto = builder.AddContainer("infra-identity", "svhd/logto", "1.43.0")
 // at the repo root. Getting this wrong writes a cache nobody reads and fails silently.
 var identityCache = ".identity/store-pooled.json";
 var identityCacheFromPackage = $"../../{identityCache}";
-// AppHost B's store reads THIS file (OIDC_JWKS_CACHE_PATH in AppHostB). It holds the dedicated
-// client's registration plus the key set, and the dedicated instance never calls the Management
-// API for either -- it PULLS them off disk (CE4, CE7). Writing it is A's job for exactly as long
-// as A still knows B's address; phase 1 replaces it with the register response.
-// Without this variable the bootstrap writes only the pooled cache, the dedicated store starts
-// with clientId "" and its very first /auth/login answers 400 "not registered with the issuer".
-var identityCacheDedicated = ".identity/store-zenith.json";
+// It registers NOTHING for a dedicated instance any more. It used to write a second cache file
+// and a second client, from an address this model had been told in advance; that is the coupling
+// v2.0.0 removes. A dedicated instance registers itself and writes its own cache from the answer.
+//
+// What this task still owes that path is the M2M credential. The control plane has to call the
+// same Management API at RUNTIME now, and the secret is random per `logto db seed` and lives in
+// Logto's own `applications` table -- a schema we do not own (CD2) and the control plane must not
+// read. So the one task that is already allowed to read it writes it out, 0600, and the platform
+// opens that file lazily on the first registration. See apps/platform/src/identity.ts.
+var identityManagement = ".identity/management.json";
 var logtoBootstrap = builder.AddExecutable("task-identity-bootstrap", "pnpm", repoRoot,
         "--filter", "@mercatus/identity", "bootstrap")
     .WithEnvironment("LOGTO_ENDPOINT", logtoBase)
     .WithEnvironment("LOGTO_ADMIN_ENDPOINT", logtoAdminBase)
     .WithEnvironment("LOGTO_DB_URL", SuperuserUrl(pgLogto, "logto"))
     .WithEnvironment("IDENTITY_CACHE_PATH", identityCacheFromPackage)
-    .WithEnvironment("IDENTITY_CACHE_PATH_DEDICATED", $"../../{identityCacheDedicated}")
     .WithEnvironment("IDENTITY_OUT", "../../.identity/bootstrap.json")
-    // One of the four literals: B's store is registered as a redirect target here, before that
-    // store exists and from an application model that cannot see it.
-    .WithEnvironment("STORE_DEDICATED_URL", storeDedicatedBase)
+    .WithEnvironment("IDENTITY_MANAGEMENT_OUT", $"../../{identityManagement}")
     .WaitFor(logto);
 
 // The rest of the redirect URIs are Aspire-assigned, so they are attached further down, once the
@@ -275,6 +268,14 @@ var platform = Node("api-platform", "platform")
     .WithEnvironment("PLATFORM_INTERNAL_TOKEN", PlatformInternalToken)
     .WithEnvironment("FAKE_BANK_URL", fakeBankUrl)
     .WithEnvironment("FAKE_BANK_HMAC_SECRET", FakeBankHmacSecret)
+    // The issuer's Management API, for the moment a dedicated instance registers and says where
+    // it lives (v2.0.0). Relative to apps/platform, which is this process's working directory.
+    //
+    // Deliberately NOT a WaitForCompletion on the bootstrap: the control plane must be listening
+    // in seconds and Logto takes the better part of a minute to seed. The file is opened on the
+    // first registration, not at boot, and its absence is a warning in the log rather than a
+    // failed start (CG1).
+    .WithEnvironment("LOGTO_MANAGEMENT_PATH", $"../../{identityManagement}")
     .WithReference(dbPlatform)
     .WaitFor(dbPlatform)
     .WaitForCompletion(migratePlatform)

@@ -17,14 +17,23 @@
  * Idempotent (CK2): every step looks for what it would create first, so a second run against the
  * same instance changes nothing and a half-finished first run resumes.
  *
- * Finally it writes the data plane's identity cache -- client registration, discovery document,
- * key set and the organization directory -- so a store can verify an organization token offline
- * from its very first request rather than only after somebody has signed in (CG1).
+ * Finally it writes the POOLED data plane's identity cache -- client registration, discovery
+ * document, key set and the organization directory -- so a store can verify an organization token
+ * offline from its very first request rather than only after somebody has signed in (CG1).
+ *
+ * It registers NOTHING for a dedicated instance. It used to: `STORE_DEDICATED_URL` named a box
+ * that did not exist yet, at a port two application models had to agree on in advance, which is
+ * the coupling v2.0.0 removes. A dedicated instance now registers ITSELF
+ * (`POST /installations/register`), the control plane adds its redirect URIs through the same
+ * Management API this file uses, and the answer carries the client it was given. The one thing
+ * this task still owes that path is the M2M credential: `IDENTITY_MANAGEMENT_OUT`.
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
-import { LogtoManagementClient, readManagementSecret } from './logto.js';
+import { APPLICATION_NAMES } from './applications.js';
+import { LogtoManagementClient } from './logto.js';
+import { readManagementSecret } from './management-secret.js';
 
 interface Named {
   id: string;
@@ -92,51 +101,40 @@ async function main(): Promise<void> {
     .map((s) => s.trim())
     .filter(Boolean);
 
+  // Every surface in AppHost A, and nothing from AppHost B: a dedicated instance's addresses are
+  // Aspire-assigned in a model this one cannot see, and it registers them itself.
   const storePooledUrl = env('STORE_POOLED_URL', 'http://127.0.0.1:4002');
-  const storeDedicatedUrl = env('STORE_DEDICATED_URL', 'http://127.0.0.1:4003');
   const dashboardUrl = env('DASHBOARD_URL', 'http://127.0.0.1:5173');
-  const dashboardDedicatedUrl = env('DASHBOARD_DEDICATED_URL', 'http://127.0.0.1:5175');
   const adminUrl = env('ADMIN_URL', 'http://127.0.0.1:5174');
   const storefrontUrl = env('STOREFRONT_URL', 'http://127.0.0.1:3001');
-  const storefrontDedicatedUrl = env('STOREFRONT_DEDICATED_URL', 'http://127.0.0.1:3002');
 
   const applications: readonly ApplicationSpec[] = [
     {
       key: 'store-pooled',
-      name: 'Mercatus store (pooled)',
+      name: APPLICATION_NAMES.storePooled,
       type: 'Traditional',
       redirectUris: [`${storePooledUrl}/auth/callback`],
       postLogoutRedirectUris: [`${storefrontUrl}/`],
     },
     {
-      key: 'store-dedicated',
-      name: 'Mercatus store (dedicated)',
-      type: 'Traditional',
-      redirectUris: [`${storeDedicatedUrl}/auth/callback`],
-      postLogoutRedirectUris: [`${storefrontDedicatedUrl}/`],
-    },
-    {
       key: 'dashboard',
-      name: 'Mercatus dashboard',
+      name: APPLICATION_NAMES.dashboard,
       type: 'SPA',
-      redirectUris: [`${dashboardUrl}/callback`, `${dashboardDedicatedUrl}/callback`],
+      redirectUris: [`${dashboardUrl}/callback`],
       postLogoutRedirectUris: [`${dashboardUrl}/`],
     },
     {
       key: 'admin',
-      name: 'Mercatus platform console',
+      name: APPLICATION_NAMES.admin,
       type: 'SPA',
       redirectUris: [`${adminUrl}/callback`],
       postLogoutRedirectUris: [`${adminUrl}/`],
     },
     {
       key: 'storefront',
-      name: 'Mercatus storefront',
+      name: APPLICATION_NAMES.storefront,
       type: 'Traditional',
-      redirectUris: [
-        `${storefrontUrl}/api/auth/callback`,
-        `${storefrontDedicatedUrl}/api/auth/callback`,
-      ],
+      redirectUris: [`${storefrontUrl}/api/auth/callback`],
       postLogoutRedirectUris: [`${storefrontUrl}/`],
     },
   ];
@@ -260,17 +258,44 @@ async function main(): Promise<void> {
     organizations,
   });
 
-  const caches: [string | undefined, string][] = [
-    [process.env['IDENTITY_CACHE_PATH'], 'store-pooled'],
-    [process.env['IDENTITY_CACHE_PATH_DEDICATED'], 'store-dedicated'],
-  ];
-  for (const [path, key] of caches) {
-    if (!path) continue;
-    mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, JSON.stringify(cacheFor(key), null, 2), 'utf8');
+  // The POOLED store's cache, and only it. A dedicated instance writes its own from what
+  // `POST /installations/register` answered -- it is not handed a file by us any more, and it is
+  // not handed the directory of every tenant we have either (CE1).
+  const cachePath = process.env['IDENTITY_CACHE_PATH'];
+  if (cachePath) {
+    mkdirSync(dirname(cachePath), { recursive: true });
+    writeFileSync(cachePath, JSON.stringify(cacheFor('store-pooled'), null, 2), 'utf8');
     // ABSOLUTE, because `pnpm --filter <pkg> bootstrap` runs with cwd = the PACKAGE directory,
     // not the repo root, and a relative path in the log is then quietly wrong.
-    say(`wrote identity cache for ${key} -> ${resolve(path)}`);
+    say(`wrote identity cache for store-pooled -> ${resolve(cachePath)}`);
+  }
+
+  // -- the Management API credential, for the control plane -----------------------------------
+  // The awkward part of v2.0.0, made small. `apps/platform` has to call this same Management API
+  // at RUNTIME now (an instance registers and says where it lives), and the M2M secret is random
+  // per `logto db seed` and lives in Logto's own `applications` table. The platform must not read
+  // that table -- it is a schema we do not own (CD2) -- so the credential is handed over here, by
+  // the one task that is already allowed to read it, as a 0600 file the platform opens lazily.
+  // Lazy on purpose: the platform must be listening long before Logto has finished seeding.
+  const managementOut = process.env['IDENTITY_MANAGEMENT_OUT'];
+  if (managementOut) {
+    mkdirSync(dirname(managementOut), { recursive: true });
+    writeFileSync(
+      managementOut,
+      `${JSON.stringify(
+        {
+          endpoint,
+          adminEndpoint,
+          issuer: `${endpoint}/oidc`,
+          clientId: env('LOGTO_M2M_APP_ID', 'm-default'),
+          clientSecret,
+        },
+        null,
+        2,
+      )}\n`,
+      { encoding: 'utf8', mode: 0o600 },
+    );
+    say(`wrote the management credential -> ${resolve(managementOut)}`);
   }
 
   const outPath = process.env['IDENTITY_OUT'];

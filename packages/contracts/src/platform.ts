@@ -149,7 +149,27 @@ export const licencePollResultSchema = z.object({
 
 /* ------------------------------------------------------------- installations */
 
-export const createInstallationBodySchema = z.object({ tenantSlug: slugSchema });
+/**
+ * A hostname, no scheme, no port, no path. It is what the instance's `baseUrl` is PINNED to at
+ * registration (`GK`, `S1`): a stolen bootstrap token must not be spendable into
+ * `evil.com/auth/callback`, because the platform turns the registered baseUrl into a Logto
+ * redirect URI and an attacker-controlled redirect URI harvests that tenant's authorization
+ * codes. The PORT is deliberately not pinned -- a dedicated instance's port is assigned by its
+ * own orchestrator and cannot be known when the token is minted, which is the whole point of
+ * opt-in registration.
+ */
+export const hostSchema = z
+  .string()
+  .min(1)
+  .max(253)
+  .regex(/^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/, 'must be a bare hostname')
+  .transform((h) => h.toLowerCase());
+
+export const createInstallationBodySchema = z.object({
+  tenantSlug: slugSchema,
+  /** The only host this installation may ever register itself at. See `hostSchema`. */
+  expectedHost: hostSchema,
+});
 
 /** `bootstrapToken` is shown exactly once and stored only as a hash. */
 export const createInstallationResultSchema = z.object({
@@ -157,9 +177,39 @@ export const createInstallationResultSchema = z.object({
   bootstrapToken: z.string().min(32),
 });
 
+/**
+ * The instance says WHERE IT LIVES. That sentence is the whole of v2.0.0: before it, the control
+ * plane had to be told a dedicated store's address before that store existed, which is what
+ * forced `MERCATUS_STORE_DEDICATED_PORT` to be a fixed number in two application models.
+ *
+ * Every URL here is host-checked against the installation's `expectedHost` before the bootstrap
+ * token is spent, and each one becomes a redirect URI at the issuer.
+ */
 export const registerInstallationBodySchema = z.object({
   bootstrapToken: z.string().min(32),
   version: z.string().min(1),
+  /** The store API's own public base, e.g. `http://localhost:41234`. `/auth/callback` hangs off it. */
+  baseUrl: z.url(),
+  /** The merchant dashboard shipped beside it. `/callback` hangs off it. */
+  dashboardUrl: z.url().optional(),
+  /** The storefront shipped beside it. `/api/auth/callback` hangs off it. */
+  storefrontUrl: z.url().optional(),
+});
+
+/**
+ * What the issuer knows about THIS instance, minted at registration and per-instance (CE1): its
+ * own Logto application, not a client shared with the pooled plane. `organizationId` is this
+ * tenant's Logto organization and nobody else's -- a box somebody else owns has no business
+ * holding the directory of every tenant we have.
+ *
+ * Null when the control plane has no Management API credential wired up; the instance then keeps
+ * whatever identity configuration it already had, which is what `AUTH_ADAPTER=stub` runs on.
+ */
+export const instanceOidcSchema = z.object({
+  issuer: z.url(),
+  clientId: z.string().min(1),
+  clientSecret: z.string().min(1),
+  organizationId: z.string().min(1).nullable(),
 });
 
 /** Per-instance and individually revocable (CE1). Burns the bootstrap token. */
@@ -168,6 +218,8 @@ export const registerInstallationResultSchema = z.object({
   instanceToken: z.string().min(32),
   tenantId: uuidSchema,
   tenantSlug: slugSchema,
+  /** Configured BY THE ANSWER, not by environment. Null when identity is not wired up. */
+  oidc: instanceOidcSchema.nullable(),
 });
 
 /**
@@ -201,4 +253,5 @@ export type CreateInstallationBody = z.infer<typeof createInstallationBodySchema
 export type CreateInstallationResult = z.infer<typeof createInstallationResultSchema>;
 export type RegisterInstallationBody = z.infer<typeof registerInstallationBodySchema>;
 export type RegisterInstallationResult = z.infer<typeof registerInstallationResultSchema>;
+export type InstanceOidc = z.infer<typeof instanceOidcSchema>;
 export type HeartbeatBody = z.infer<typeof heartbeatBodySchema>;

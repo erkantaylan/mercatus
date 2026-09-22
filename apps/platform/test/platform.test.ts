@@ -273,33 +273,132 @@ describe('the signed licence', () => {
 
 describe('installations', () => {
   let bootstrapToken = '';
+  let installationId = '';
 
-  it('hands out a one-time bootstrap token and burns it on first use (CE1)', async () => {
+  /** Mints a host-pinned bootstrap token for `slug`. Returns the token, shown exactly once. */
+  async function mint(expectedHost: string): Promise<{ id: string; token: string }> {
     const created = await platform!.app.inject({
       method: 'POST',
       url: '/installations',
       headers: { authorization: `Bearer ${operator}` },
-      payload: { tenantSlug: slug },
+      payload: { tenantSlug: slug, expectedHost },
     });
     expect(created.statusCode).toBe(201);
-    bootstrapToken = (created.json() as { bootstrapToken: string }).bootstrapToken;
+    const body = created.json() as { installationId: string; bootstrapToken: string };
+    return { id: body.installationId, token: body.bootstrapToken };
+  }
+
+  it('hands out a one-time bootstrap token and burns it on first use (CE1)', async () => {
+    const minted = await mint('store.example');
+    bootstrapToken = minted.token;
+    installationId = minted.id;
 
     const registered = await platform!.app.inject({
       method: 'POST',
       url: '/installations/register',
-      payload: { bootstrapToken, version: '1.0.0' },
+      payload: {
+        bootstrapToken,
+        version: '1.0.0',
+        baseUrl: 'http://store.example:8123',
+        dashboardUrl: 'http://store.example:8124',
+      },
     });
     expect(registered.statusCode).toBe(200);
-    const body = registered.json() as { instanceToken: string; tenantSlug: string };
+    const body = registered.json() as {
+      instanceToken: string;
+      tenantSlug: string;
+      oidc: unknown;
+    };
     instanceToken = body.instanceToken;
     expect(body.tenantSlug).toBe(slug);
+    // No Management API credential in the test environment, so the instance is registered and
+    // told there is no issuer client for it. That is a normal answer, not a failure.
+    expect(body.oidc).toBeNull();
 
     const again = await platform!.app.inject({
       method: 'POST',
       url: '/installations/register',
-      payload: { bootstrapToken, version: '1.0.0' },
+      payload: { bootstrapToken, version: '1.0.0', baseUrl: 'http://store.example:8123' },
     });
     expect(again.statusCode).toBe(401);
+  });
+
+  it('records where the instance said it lives', async () => {
+    const list = await platform!.app.inject({
+      method: 'GET',
+      url: '/installations',
+      headers: { authorization: `Bearer ${operator}` },
+    });
+    const mine = (
+      list.json() as { items: { id: string; baseUrl: string; expectedHost: string }[] }
+    ).items.find((i) => i.id === installationId);
+    expect(mine).toMatchObject({
+      expectedHost: 'store.example',
+      baseUrl: 'http://store.example:8123',
+    });
+  });
+
+  it('REFUSES a baseUrl on a host the installation is not pinned to (GK, S1)', async () => {
+    const minted = await mint('store.example');
+
+    const evil = await platform!.app.inject({
+      method: 'POST',
+      url: '/installations/register',
+      payload: { bootstrapToken: minted.token, version: '1.0.0', baseUrl: 'https://evil.example' },
+    });
+    // The same 401 an unknown token gets: one generic answer, the reason in the log (S1).
+    expect(evil.statusCode).toBe(401);
+
+    // A pinned host is checked on EVERY reported URL, not only the first.
+    const sneaky = await platform!.app.inject({
+      method: 'POST',
+      url: '/installations/register',
+      payload: {
+        bootstrapToken: minted.token,
+        version: '1.0.0',
+        baseUrl: 'http://store.example:8123',
+        dashboardUrl: 'https://evil.example/x',
+      },
+    });
+    expect(sneaky.statusCode).toBe(401);
+
+    // And the token was NOT burned by either refusal: a host mismatch is a typo far more often
+    // than it is an attack, and burning it would brick the install for good.
+    const ok = await platform!.app.inject({
+      method: 'POST',
+      url: '/installations/register',
+      payload: {
+        bootstrapToken: minted.token,
+        version: '1.0.0',
+        baseUrl: 'http://store.example:9999',
+      },
+    });
+    expect(ok.statusCode).toBe(200);
+
+    // Deprovisioning is built at the same time as provisioning (CK1), so clean this one up.
+    const id = (ok.json() as { installationId: string }).installationId;
+    const gone = await platform!.app.inject({
+      method: 'DELETE',
+      url: `/installations/${id}`,
+      headers: { authorization: `Bearer ${operator}` },
+    });
+    expect(gone.statusCode).toBe(204);
+
+    const twice = await platform!.app.inject({
+      method: 'DELETE',
+      url: `/installations/${id}`,
+      headers: { authorization: `Bearer ${operator}` },
+    });
+    expect(twice.statusCode).toBe(404);
+  });
+
+  it('refuses to deprovision with an instance token rather than an operator one (BH1)', async () => {
+    const res = await platform!.app.inject({
+      method: 'DELETE',
+      url: `/installations/${installationId}`,
+      headers: { authorization: `Bearer ${instanceToken}` },
+    });
+    expect(res.statusCode).toBe(401);
   });
 
   it('refuses an installation for a pooled tenant', async () => {
@@ -307,7 +406,7 @@ describe('installations', () => {
       method: 'POST',
       url: '/installations',
       headers: { authorization: `Bearer ${operator}` },
-      payload: { tenantSlug: 'acme' },
+      payload: { tenantSlug: 'acme', expectedHost: 'store.example' },
     });
     expect(res.statusCode).toBe(409);
   });

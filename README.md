@@ -269,11 +269,22 @@ cat .stack/apphost-b.json    # store-zenith, storefront-zenith, dashboard-zenith
 absent is exactly what makes the dedicated-instance spec skip. Both Aspire dashboards
 (**15230** and **15240**) list the same addresses if you would rather click.
 
-Four ports are still fixed, because AppHost B has to find A without reading A's application model:
-the edge (`28080`), identity and its admin API (`28311`, `28312`), and the dedicated store
-(`28403`). Each reads an override — `MERCATUS_EDGE_PORT`, `MERCATUS_LOGTO_PORT`,
-`MERCATUS_LOGTO_ADMIN_PORT`, `MERCATUS_STORE_DEDICATED_PORT` — and both AppHosts read the same
-variable, so a collision is one export in front of both commands.
+**Three** ports are still fixed, because AppHost B has to find A without reading A's application
+model: the edge (`28080`) and identity with its admin API (`28311`, `28312`). Each reads an
+override — `MERCATUS_EDGE_PORT`, `MERCATUS_LOGTO_PORT`, `MERCATUS_LOGTO_ADMIN_PORT` — and both
+AppHosts read the same variable, so a collision is one export in front of both commands.
+
+There were four until **v2.0.0**. The fourth was the dedicated store (`28403`), and it was fixed
+for exactly one reason: its address had to be registered as an OIDC redirect URI by AppHost A,
+before that store existed. Registration is now **opt-in** — the instance presents its one-time
+bootstrap token, says where it lives, and the control plane registers exactly that with the
+issuer and hands back `{issuer, clientId, clientSecret}` of a client minted for that installation
+alone (`CE1`). The token is **host-pinned**: an installation records one hostname when it is
+minted, and a `baseUrl` on any other host is refused with the same generic 401 an unknown token
+gets, the real reason in the log (`GK`, `S1`). Adding a dedicated tenant is now zero edits to
+AppHost A. `DELETE /installations/:id` is the other half, built at the same time (`CK1`): it
+deletes that instance's client at the issuer and takes its redirect URIs back out of the shared
+ones.
 
 One `aspire run` in `aspire/AppHostA` starts all of A — the control plane, the pooled store, the
 storefront, the dashboard, the console, identity and the edge. AppHost **B** starts its own

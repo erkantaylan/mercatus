@@ -49,7 +49,7 @@ Four Postgres containers run at once with both AppHosts up: `pg-platform`, `pg-s
 running something on 8080 or 3001 needs no arrangement — which is how this ended up here, on a box
 whose 8080 was a reverse proxy and whose 3001 was a markdown server.
 
-Four ports are fixed, because a second application model has to find them without reading the
+Three ports are fixed, because a second application model has to find them without reading the
 first (see `aspire/AppHostA/apphost.cs`). Each takes an override, so a collision is a variable and
 not a patch — export it for **both** `aspire run` commands, since both AppHosts read it:
 
@@ -58,8 +58,12 @@ not a patch — export it for **both** `aspire run` commands, since both AppHost
 | `28080` | `MERCATUS_EDGE_PORT` | Traefik edge — every HTML surface of AppHost A |
 | `28311` | `MERCATUS_LOGTO_PORT` | identity, as the OIDC discovery document advertises it |
 | `28312` | `MERCATUS_LOGTO_ADMIN_PORT` | identity admin, where the M2M token is minted |
-| `28403` | `MERCATUS_STORE_DEDICATED_PORT` | store API on "their VPS" — registered as a redirect URI by AppHost A |
-| dynamic | | everything else: both store APIs' siblings, both storefronts, both dashboards, the console, the platform API, fake-bank, four Postgres instances, both Aspire dashboards |
+| dynamic | | everything else: BOTH store APIs, both storefronts, both dashboards, the console, the platform API, fake-bank, four Postgres instances, both Aspire dashboards |
+
+A fourth, `28403` / `MERCATUS_STORE_DEDICATED_PORT`, was deleted in **v2.0.0**. It was fixed only
+because AppHost A registered the dedicated store's address as an OIDC redirect URI before that
+store existed; the instance now reports its own address at registration and is host-pinned to the
+hostname the installation was minted for.
 
 Where the dynamic ones landed is written to `.stack/apphost-a.json` and `.stack/apphost-b.json` on
 every run, which is what the e2e suite reads instead of a table.

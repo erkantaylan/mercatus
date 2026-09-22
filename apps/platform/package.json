@@ -14,6 +14,7 @@
     "@mercatus/contracts": "workspace:*",
     "@mercatus/core": "workspace:*",
     "@mercatus/db-platform": "workspace:*",
+    "@mercatus/identity": "workspace:*",
     "fastify": "catalog:",
     "fastify-type-provider-zod": "catalog:",
     "jose": "catalog:",

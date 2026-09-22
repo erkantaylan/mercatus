@@ -68,6 +68,22 @@ const platformEnvSchema = z
     /** What a store costs. One plan, one price; there is no pricing model in this POC. */
     STORE_PLAN_PRICE_MINOR: z.coerce.number().int().positive().default(49_900),
     STORE_PLAN_CURRENCY: z.string().length(3).default('TRY'),
+
+    /**
+     * The issuer's Management API credential, so a registering instance can be given a client and
+     * its redirect URIs (v2.0.0). A FILE, read lazily on the first registration and never at
+     * boot: `task-identity-bootstrap` writes it 0600 after Logto has seeded, which is long after
+     * the control plane must be listening. Absent means identity is simply not wired up -- every
+     * other thing registration does still happens, and the instance is told `oidc: null`.
+     *
+     * The four LOGTO_* variables below are the same credential passed directly, for a deployment
+     * that keeps it in a secret store rather than on a disk. They win over the file.
+     */
+    LOGTO_MANAGEMENT_PATH: z.string().min(1).optional(),
+    LOGTO_ENDPOINT: z.url().optional(),
+    LOGTO_ADMIN_ENDPOINT: z.url().optional(),
+    LOGTO_M2M_APP_ID: z.string().min(1).default('m-default'),
+    LOGTO_M2M_SECRET: z.string().min(1).optional(),
   })
   .superRefine((env, ctx) => {
     if (env.AUTH_ADAPTER === 'stub' && !env.AUTH_STUB_SECRET) {
@@ -104,6 +120,18 @@ export interface PlatformConfig {
   readonly licenceKeysAreDevDefaults: boolean;
   readonly planPriceMinor: number;
   readonly planCurrency: string;
+  /** Where to read the issuer's Management API credential from, when it is a file. */
+  readonly logtoManagementPath: string | undefined;
+  /** ... or the whole credential, when the environment carries it directly. */
+  readonly logtoManagement:
+    | {
+        readonly endpoint: string;
+        readonly adminEndpoint: string;
+        readonly issuer: string;
+        readonly clientId: string;
+        readonly clientSecret: string;
+      }
+    | undefined;
 }
 
 export type EnvSource = Record<string, string | undefined>;
@@ -139,5 +167,16 @@ export function loadPlatformConfig(env: EnvSource = process.env): PlatformConfig
     licenceKeysAreDevDefaults: usingDevKeys,
     planPriceMinor: value.STORE_PLAN_PRICE_MINOR,
     planCurrency: value.STORE_PLAN_CURRENCY,
+    logtoManagementPath: value.LOGTO_MANAGEMENT_PATH,
+    logtoManagement:
+      value.LOGTO_ENDPOINT && value.LOGTO_ADMIN_ENDPOINT && value.LOGTO_M2M_SECRET
+        ? {
+            endpoint: value.LOGTO_ENDPOINT,
+            adminEndpoint: value.LOGTO_ADMIN_ENDPOINT,
+            issuer: `${value.LOGTO_ENDPOINT.replace(/\/+$/, '')}/oidc`,
+            clientId: value.LOGTO_M2M_APP_ID,
+            clientSecret: value.LOGTO_M2M_SECRET,
+          }
+        : undefined,
   };
 }
