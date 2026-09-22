@@ -31,8 +31,23 @@ Pulled automatically on first run. Nothing to install by hand.
 | `traefik` | `v3.5` |
 | `postgres` | whatever `Aspire.Hosting.PostgreSQL@13.5.4` resolves (18.x) |
 
-Four Postgres containers run at once with both AppHosts up: `pg-platform`, `pg-store`, `pg-logto`
-(AppHost A) and `pg-zenith` (AppHost B).
+**Five Postgres containers** run at once in the topology the acceptance list asks for -- two
+pooled tenants and two dedicated ones:
+
+| Container | AppHost | Holds |
+|---|---|---|
+| `pg-platform-*` | A | the control plane: tenants, licences, installations |
+| `pg-store-*` | A | the POOLED data plane, `acme` and `borg` in one database under RLS |
+| `pg-identity-*` | A | Logto's own schema. Nothing of ours is in it (CD2) |
+| `pg-tenant-zenith-*` | B (`run-dedicated.sh zenith`) | that box's data plane, and nothing else's |
+| `pg-tenant-orion-*` | B (`run-dedicated.sh orion`) | likewise |
+
+Aspire suffixes every container name, so match on the prefix. One dedicated instance is four
+containers, plus Traefik; the everyday loop with only zenith is four Postgres, not five.
+
+(The names `pg-logto` and `pg-zenith` appear in older notes. They were renamed by "name every
+resource by what it is", and the tenant databases became `pg-tenant-<slug>` when one AppHost B
+started serving any tenant.)
 
 ---
 

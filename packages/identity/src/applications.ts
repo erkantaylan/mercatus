@@ -261,3 +261,59 @@ export async function ensureOrganizationBySlug(
     throw error;
   }
 }
+
+/**
+ * The merchant who can actually sign in to a tenant bought at run time.
+ *
+ * `ensureOrganizationBySlug` creates the ORGANIZATION and nothing else, which left a hole one
+ * step further on: `bootstrap.ts` also makes a `<slug>_owner` user and gives it the `owner` role
+ * in that organization, and it only does that for the slugs in `IDENTITY_TENANT_SLUGS` -- a
+ * development literal fixed at AppHost A's startup. So under `AUTH_ADAPTER=stub` a runtime tenant
+ * looked complete (the dashboard signed in by slug), and under `oidc` its merchant had no way in
+ * at all. Same family as the front ends having no OIDC path; this is the last member of it.
+ *
+ * The password is a DEVELOPMENT literal and this is a development convenience. In the product a
+ * merchant is invited and sets their own; what is real here is the membership and the role, which
+ * is what an organization token is minted from (BC1, CD3).
+ *
+ * Idempotent (CK2): an existing username is reused, and the role relations answer 4xx when they
+ * are already there, which `relateQuietly` swallows and nothing else does.
+ */
+export async function ensureOrganizationOwner(
+  client: LogtoManagementClient,
+  input: { slug: string; organizationId: string; password: string },
+): Promise<{ username: string; userId: string }> {
+  // Logto validates usernames against /^[A-Z_a-z]\w*$/ -- a hyphen is a 400, so a slug with one
+  // becomes an underscore here exactly as bootstrap.ts does it.
+  const username = `${input.slug.replace(/-/g, '_')}_owner`;
+
+  const existing = await client.get<{ id: string; username: string | null }[]>(
+    '/users?page=1&page_size=100',
+  );
+  let userId = existing.find((user) => user.username === username)?.id;
+  if (userId === undefined) {
+    const created = await client.post<{ id: string }>('/users', {
+      username,
+      password: input.password,
+      name: `${input.slug} owner`,
+    });
+    userId = created.id;
+  }
+
+  // The relation endpoints answer 201 with the literal body `Created`, not JSON, and 4xx when the
+  // relation already exists. Both are success as far as this function is concerned.
+  const relateQuietly = async (path: string, body: unknown): Promise<void> => {
+    try {
+      await client.post(path, body);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/-> 4\d\d/.test(message)) throw error;
+    }
+  };
+  await relateQuietly(`/organizations/${input.organizationId}/users`, { userIds: [userId] });
+  await relateQuietly(`/organizations/${input.organizationId}/users/${userId}/roles`, {
+    organizationRoleNames: ['owner'],
+  });
+
+  return { username, userId };
+}

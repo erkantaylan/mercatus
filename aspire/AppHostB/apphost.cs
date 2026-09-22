@@ -68,8 +68,13 @@ var controlPlane = builder.AddExternalService("ext-control-plane", ControlPlaneU
 var fakeBank = builder.AddExternalService("ext-fake-bank", FakeBankUrl)
     .WithHttpHealthCheck("/health");
 
-// One issuer, one JWKS, for both planes (CD4). Unused while this instance runs on the stub
-// adapter, and named anyway, because the dependency is real the moment AUTH_ADAPTER=oidc.
+// One issuer, one JWKS, for both planes (CD4).
+//
+// Named here, but the CLIENT is not configured here and cannot be: this box learns its issuer,
+// client id and client secret from the answer to `POST /installations/register`, and the three
+// redirect URIs it will use are registered at that moment from the Aspire-assigned addresses
+// below. That is the whole of v2.0.0 -- the control plane no longer has to be told this box's
+// address in advance.
 var identity = builder.AddExternalService("ext-identity", IdentityUrl);
 
 // ---------------------------------------------------------------------------------------------

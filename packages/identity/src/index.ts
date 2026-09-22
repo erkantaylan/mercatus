@@ -28,6 +28,7 @@ export {
   deleteApplication,
   ensureInstallationClient,
   ensureOrganizationBySlug,
+  ensureOrganizationOwner,
   findApplicationByName,
   findOrganizationIdBySlug,
   reconcileRedirectUris,

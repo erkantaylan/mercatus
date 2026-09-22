@@ -80,6 +80,16 @@ const platformEnvSchema = z
      * that keeps it in a secret store rather than on a disk. They win over the file.
      */
     LOGTO_MANAGEMENT_PATH: z.string().min(1).optional(),
+    /**
+     * The development password given to the `<slug>_owner` user created for a tenant that was
+     * bought at RUN TIME (v2.0.0 repair round 1). Unset means no such user is created, which is
+     * the correct production behaviour: a merchant is invited and sets their own.
+     *
+     * The same literal `packages/identity/src/bootstrap.ts` gives the seeded tenants' owners, so
+     * every merchant in the dev topology signs in the same way whether their tenant existed when
+     * AppHost A started or not.
+     */
+    IDENTITY_DEV_PASSWORD: z.string().min(8).optional(),
     LOGTO_ENDPOINT: z.url().optional(),
     LOGTO_ADMIN_ENDPOINT: z.url().optional(),
     LOGTO_M2M_APP_ID: z.string().min(1).default('m-default'),
@@ -122,6 +132,8 @@ export interface PlatformConfig {
   readonly planCurrency: string;
   /** Where to read the issuer's Management API credential from, when it is a file. */
   readonly logtoManagementPath: string | undefined;
+  /** Dev only: the password for the owner user a runtime-created tenant is given. */
+  readonly devOwnerPassword: string | undefined;
   /** ... or the whole credential, when the environment carries it directly. */
   readonly logtoManagement:
     | {
@@ -168,6 +180,7 @@ export function loadPlatformConfig(env: EnvSource = process.env): PlatformConfig
     planPriceMinor: value.STORE_PLAN_PRICE_MINOR,
     planCurrency: value.STORE_PLAN_CURRENCY,
     logtoManagementPath: value.LOGTO_MANAGEMENT_PATH,
+    devOwnerPassword: value.IDENTITY_DEV_PASSWORD,
     logtoManagement:
       value.LOGTO_ENDPOINT && value.LOGTO_ADMIN_ENDPOINT && value.LOGTO_M2M_SECRET
         ? {

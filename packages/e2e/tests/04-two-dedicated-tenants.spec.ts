@@ -67,6 +67,7 @@ import {
   sellableProduct,
   staffOrderCount,
   stopProcess,
+  stubOnlyReason,
 } from './helpers/stack.js';
 
 /** One person, minted for this run, who will hold an account at four shops on three origins. */
@@ -104,7 +105,27 @@ let captured: CapturedProcess | null = null;
 test.describe.configure({ mode: 'serial' });
 
 test.describe('two pooled and TWO dedicated tenants, at once', () => {
+  /**
+   * This file is the STUB adapter's demo. It mints a fresh shopper per run so its counts stay
+   * true on the tenth run as well as the first, which under a real issuer would mean creating a
+   * user at that issuer per run. `tests/05-oidc-four-tenants.spec.ts` is the same four-tenant
+   * demo on `oidc`, with the seeded account and deltas instead of absolutes.
+   *
+   * A skip here always names the reason, and the reason names the file that DOES cover it.
+   */
+  let stubOnly = '';
+  test.beforeAll(async () => {
+    stubOnly = await stubOnlyReason(ENDPOINTS.storePooled);
+  });
+  test.beforeEach(() => {
+    test.skip(stubOnly !== '', stubOnly);
+  });
+
   test.beforeAll(async ({ browser }) => {
+    // Nothing below may run on a real issuer: the fixtures it takes (order counts via
+    // `/dev/login/staff`) do not exist there. `beforeEach` skips every test; this stops the
+    // SETUP from failing first and reporting it as a broken suite.
+    if (stubOnly !== '') return;
     const reachableBoxes = await Promise.all(
       BOXES.map(async (box) =>
         box.store !== '' &&
@@ -186,7 +207,7 @@ test.describe('two pooled and TWO dedicated tenants, at once', () => {
     for (const slug of [TENANTS.acme.slug, TENANTS.borg.slug]) {
       const title = await sellableProduct(ENDPOINTS.storePooled, slug);
       await addToBasket(page, ENDPOINTS.storefront, slug, title);
-      const purchase = await checkout(page, ENDPOINTS.storefront, slug);
+      const purchase = await checkout(page, ENDPOINTS.storefront, slug, SHOPPER);
       expect(purchase.payment).toBe('paid');
       // Per-tenant, gapless numbering from that tenant's own counter, never a global one (BG2).
       expect(purchase.number).toBe((before[slug] ?? 0) + 1);
@@ -205,7 +226,7 @@ test.describe('two pooled and TWO dedicated tenants, at once', () => {
 
       const title = await sellableProduct(box.store, box.slug);
       await addToBasket(page, box.storefront, box.slug, title);
-      const purchase = await checkout(page, box.storefront, box.slug);
+      const purchase = await checkout(page, box.storefront, box.slug, SHOPPER);
       expect(purchase.payment).toBe('paid');
       // Its own counter, in its own database, on its own server (BG2, CC2).
       expect(purchase.number).toBe((before[box.slug] ?? 0) + 1);
@@ -301,7 +322,7 @@ test.describe('two pooled and TWO dedicated tenants, at once', () => {
 
       const title = await sellableProduct(box.store, box.slug);
       await addToBasket(page, box.storefront, box.slug, title);
-      const purchase = await checkout(page, box.storefront, box.slug);
+      const purchase = await checkout(page, box.storefront, box.slug, SHOPPER);
 
       // Placed, numbered and priced by their own database with our control plane dark. `paid`
       // while the bank answers, `unreachable` when it does not: both are a completed checkout as

@@ -35,6 +35,7 @@ import {
   sellableProduct,
   staffOrderCount,
   stopProcess,
+  stubOnlyReason,
 } from './helpers/stack.js';
 
 /**
@@ -73,7 +74,27 @@ let ordersBefore = 0;
 test.describe.configure({ mode: 'serial' });
 
 test.describe('the dedicated instance keeps selling with the control plane down', () => {
+  /**
+   * This file is the STUB adapter's demo. It mints a fresh shopper per run so its counts stay
+   * true on the tenth run as well as the first, which under a real issuer would mean creating a
+   * user at that issuer per run. `tests/05-oidc-four-tenants.spec.ts` is the same four-tenant
+   * demo on `oidc`, with the seeded account and deltas instead of absolutes.
+   *
+   * A skip here always names the reason, and the reason names the file that DOES cover it.
+   */
+  let stubOnly = '';
+  test.beforeAll(async () => {
+    stubOnly = await stubOnlyReason(ENDPOINTS.storePooled);
+  });
+  test.beforeEach(() => {
+    test.skip(stubOnly !== '', stubOnly);
+  });
+
   test.beforeAll(async ({ browser }) => {
+    // Nothing below may run on a real issuer: the fixtures it takes (order counts via
+    // `/dev/login/staff`) do not exist there. `beforeEach` skips every test; this stops the
+    // SETUP from failing first and reporting it as a broken suite.
+    if (stubOnly !== '') return;
     dedicatedUp =
       ZENITH.store !== '' &&
       (await reachable(ZENITH.store)) &&
@@ -120,7 +141,7 @@ test.describe('the dedicated instance keeps selling with the control plane down'
 
     const title = await sellableProduct(ZENITH.store, SLUG);
     await addToBasket(page, ZENITH.storefront, SLUG, title);
-    const purchase = await checkout(page, ZENITH.storefront, SLUG);
+    const purchase = await checkout(page, ZENITH.storefront, SLUG, SHOPPER);
 
     expect(purchase.payment).toBe('paid');
     // Zenith's own counter, on its own database (BG2, CC2). On a fresh AppHost B that is 1.
@@ -158,7 +179,7 @@ test.describe('the dedicated instance keeps selling with the control plane down'
 
     const title = await sellableProduct(ZENITH.store, SLUG);
     await addToBasket(page, ZENITH.storefront, SLUG, title);
-    const purchase = await checkout(page, ZENITH.storefront, SLUG);
+    const purchase = await checkout(page, ZENITH.storefront, SLUG, SHOPPER);
 
     // Placed, numbered and priced by their own database, with our control plane dark. `paid` when
     // the bank is still reachable, `unreachable` when it is not -- both are a completed checkout

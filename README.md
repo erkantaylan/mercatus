@@ -175,7 +175,7 @@ packages/
   db-store       #   "
   ui             # tokens.css + reset.css. Stylesheets only, no React components
   identity       # Logto bootstrap and the OIDC login round-trip gate
-  e2e            # Playwright — the three stories, driven in real Chrome
+  e2e            # Playwright — five stories in real Chrome, one of them on a real issuer
 aspire/
   AppHostA       # C# — ours: control plane, identity, bank, pooled plane, the edge
   AppHostB       # C# — "their server": one tenant, own database, outbound only
@@ -285,10 +285,47 @@ says so itself, and says what to do: *"To run multiple isolated instances simult
 different directories."* So each extra instance gets a generated directory of its own:
 
 ```bash
-# zenith the everyday way, orion beside it
-cd aspire/AppHostB && aspire run --detach --non-interactive --nologo --format Json
-aspire/scripts/run-dedicated.sh orion "$BOOTSTRAP_TOKEN"      # and stop-dedicated.sh orion
+# The whole four-tenant topology. AppHost A, then one command per dedicated box.
+( cd aspire/AppHostA && aspire run --detach --non-interactive --nologo --format Json )
+aspire/scripts/run-dedicated.sh zenith        # and stop-dedicated.sh zenith
+aspire/scripts/run-dedicated.sh orion         # and stop-dedicated.sh orion
 ```
+
+**Those two slugs need no token and no curl**, and that is a property of the DEV LOOP, not of the
+product: `packages/db-platform/src/seed-dedicated.ts` seeds a tenant, a licence and an unspent,
+host-pinned installation for each of `zenith` and `orion` on every fresh control-plane database,
+and `apphost.cs` falls back to the development literal for the slug it was given. It is seeded
+because `aspire stop` on AppHost A destroys A's Postgres: without it, every control-plane rebuild
+cost the operator four authenticated calls per box, and left a stale `.instance/<slug>.json`
+pointing at an installation that no longer existed.
+
+**Any OTHER slug is four authenticated calls first**, which is the real path a customer takes:
+
+```bash
+PLATFORM=http://platform.localtest.me:28080
+TOKEN=$(curl -sX POST $PLATFORM/dev/login/operator -H 'content-type: application/json' \
+        -d '{"subject":"ops"}' | jq -r .accessToken)              # accessToken, NOT token
+curl -sX POST $PLATFORM/tenants -H "authorization: Bearer $TOKEN" \
+     -H 'content-type: application/json' \
+     -d '{"slug":"vega","name":"Vega Works","tier":"dedicated"}'
+curl -sX POST $PLATFORM/tenants/vega/activate -H "authorization: Bearer $TOKEN" \
+     -H 'content-type: application/json' -d '{}'
+BOOTSTRAP=$(curl -sX POST $PLATFORM/installations -H "authorization: Bearer $TOKEN" \
+     -H 'content-type: application/json' \
+     -d '{"tenantSlug":"vega","expectedHost":"vega.localtest.me"}' | jq -r .bootstrapToken)
+
+aspire/scripts/run-dedicated.sh vega "$BOOTSTRAP"
+```
+
+`expectedHost` is the instance's OWN hostname. AppHost B publishes every browser-facing address
+as `<slug>.localtest.me:<aspire-assigned port>` -- `*.localtest.me` resolves to loopback with no
+`/etc/hosts` entry -- because cookies are scoped by host and **ignore the port**, so several
+boxes published as `localhost:<port>` would share one cookie jar and the second sign-in would
+destroy the first store's session. The port is never pinned; only the host is.
+
+`POST /signup` is the product's actual front door and works too, but it leaves the tenant
+`pending` until a fake-bank round trip settles. `/tenants` + `/tenants/:slug/activate` is the
+operator path: it issues the licence and needs no browser.
 
 `aspire/AppHostB-<slug>/` is rewritten from `aspire/AppHostB/apphost.cs` on every run and is
 gitignored: a build artifact, not a second copy to keep in step. `--isolated` is still needed --
@@ -329,14 +366,33 @@ storefront, the dashboard, the console, identity and the edge. AppHost **B** sta
 store, storefront and dashboard. Nothing has to be started by hand.
 
 **Which identity the stack runs on.** `aspire run` defaults the data plane to the **stub** auth
-adapter, because the dashboard, the console and the storefront all sign in through `/dev/login/*`,
-which exists only while the stub is the adapter (it refuses to construct under
-`NODE_ENV=production`). `MERCATUS_AUTH_ADAPTER=oidc aspire run …` swaps the whole data plane onto
-Logto and nothing else about the topology changes (`CC1`). Be honest about the coverage: the
-end-to-end suite drives the **stub**, so headline #3 is demonstrated by
-`packages/identity/scripts/login-round-trip.sh` (task 08's gate — a real authorization-code flow,
-driven with curl) and not by `pnpm test:e2e`. Logto is started, health-checked and bootstrapped on
-every run regardless, which costs a container and a bootstrap step.
+adapter; `MERCATUS_AUTH_ADAPTER=oidc aspire run …` swaps the whole data plane onto Logto, and
+nothing else about the topology changes (`CC1`) — **including how anybody signs in**.
+
+That last clause is new, and it is the whole of repair round 1. Until it, the storefront minted
+shopper tokens at `${store}/dev/login/shopper` and the dashboard staff tokens at
+`/dev/login/staff`; both routes are registered only while the adapter is the stub, so turning the
+real issuer on answered **502** on shopper sign-in and **404** on merchant sign-in, on both
+planes. "Real OIDC on both planes" and "one shopper account buying from four shops in a browser"
+were mutually exclusive: you got the shopping demo on the stub, or a curl script with no shopping
+and no dashboards.
+
+Both front ends now go through the store's own `/auth/*`, and **the store is the only OIDC client
+in the topology** — it is the one process that holds a client secret, so the storefront's callback
+(`${storefront}/api/auth/callback`) and the dashboard's (`${dashboard}/callback`) are ITS redirect
+URIs. `GET /auth/login?via=store|storefront|dashboard` picks which of the three the code comes
+back to; `POST /auth/exchange` hands the store's own session back as a token to a front end that
+cannot be sent this store's host-only cookie. Under the stub the issuer in the middle is the
+store's own `GET /dev/login` page — plain server-rendered HTML, no password — and under `oidc` it
+is Logto. One code path, both adapters, which is what makes the switch a switch.
+
+Coverage, stated plainly: `pnpm test:e2e` runs 22 tests against the **stub** and
+`packages/e2e/tests/05-oidc-four-tenants.spec.ts` runs the same four-tenant demo against **Logto**
+in a real browser — one account signing in once, buying at all four shops across three origins,
+and four merchants signing in at four dashboards. It detects the adapter from where `/auth/login`
+redirects, skips on the stub with the command that turns that around, and
+`MERCATUS_E2E_REQUIRE_OIDC=1` turns that skip into a failure. Logto is started, health-checked and
+bootstrapped on every run regardless, which costs a container and a bootstrap step.
 
 **The demo.** With both up, buy something on the dedicated storefront —
 `jq -r .endpoints.storefront .stack/apphost-zenith.json` is where it landed this run. Then
@@ -350,9 +406,9 @@ stays **200**.
 is not the obvious command:
 
 ```bash
-cd aspire/AppHostA && aspire run --detach --non-interactive --nologo --format Json
-cd ../AppHostB && aspire stop --non-interactive --nologo
-aspire run --detach --non-interactive --nologo --format Json
+( cd aspire/AppHostA && aspire run --detach --non-interactive --nologo --format Json )
+aspire/scripts/stop-dedicated.sh zenith && aspire/scripts/run-dedicated.sh zenith
+aspire/scripts/stop-dedicated.sh orion  && aspire/scripts/run-dedicated.sh orion
 ```
 
 Stopping A destroyed A's Postgres, so the rebuilt control plane has never heard of that
@@ -382,8 +438,16 @@ several storefronts on `localhost` share one jar and overwrite each other's shop
 ```bash
 pnpm -r test                    # 261 tests, 0 skipped, no stack needed
 pnpm turbo run typecheck lint   # 26 tasks
-pnpm test:e2e                   # 22 Playwright tests in real Chrome -- needs AppHost A up
+pnpm test:e2e                   # 22 Playwright tests in real Chrome, against the live
+                                # four-tenant topology: AppHost A and BOTH dedicated boxes
+MERCATUS_E2E_REQUIRE_OIDC=1 pnpm test:e2e    # ... with the whole stack on MERCATUS_AUTH_ADAPTER=oidc
 ```
+
+`pnpm test:e2e` **fails rather than skips** when a dedicated instance it is claiming is not
+running. What it claims is `MERCATUS_E2E_DEDICATED`, default `zenith,orion`; narrowing it is an
+explicit act that the skip reason quotes back at you. That is deliberate: every test in
+`04-two-dedicated-tenants.spec.ts` used to open with `test.skip(!bothUp, …)`, so the one-box loop
+reported the whole file green having proved nothing about two dedicated tenants at all.
 
 `packages/e2e` declares no `test` script, so `pnpm -r test` covers **13 of the 14** workspace
 projects and never opens a browser: the storefront, the dashboard, the console, the edge and the

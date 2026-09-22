@@ -32,7 +32,13 @@ import {
   signInToDashboard,
   signOutOfDashboard,
 } from './helpers/shop.js';
-import { ENDPOINTS, TENANTS, sellableProduct, staffOrderCount } from './helpers/stack.js';
+import {
+  ENDPOINTS,
+  TENANTS,
+  sellableProduct,
+  staffOrderCount,
+  stubOnlyReason,
+} from './helpers/stack.js';
 
 /**
  * A NEW shopper every run, and every count below is relative to what the stores already held.
@@ -71,7 +77,27 @@ let page: Page;
 test.describe.configure({ mode: 'serial' });
 
 test.describe('one shopper, two pooled merchants', () => {
+  /**
+   * This file is the STUB adapter's demo. It mints a fresh shopper per run so its counts stay
+   * true on the tenth run as well as the first, which under a real issuer would mean creating a
+   * user at that issuer per run. `tests/05-oidc-four-tenants.spec.ts` is the same four-tenant
+   * demo on `oidc`, with the seeded account and deltas instead of absolutes.
+   *
+   * A skip here always names the reason, and the reason names the file that DOES cover it.
+   */
+  let stubOnly = '';
+  test.beforeAll(async () => {
+    stubOnly = await stubOnlyReason(ENDPOINTS.storePooled);
+  });
+  test.beforeEach(() => {
+    test.skip(stubOnly !== '', stubOnly);
+  });
+
   test.beforeAll(async ({ browser }) => {
+    // Nothing below may run on a real issuer: the fixtures it takes (order counts via
+    // `/dev/login/staff`) do not exist there. `beforeEach` skips every test; this stops the
+    // SETUP from failing first and reporting it as a broken suite.
+    if (stubOnly !== '') return;
     before.acme = await staffOrderCount(ENDPOINTS.storePooled, TENANTS.acme.slug);
     before.borg = await staffOrderCount(ENDPOINTS.storePooled, TENANTS.borg.slug);
     product.acme = await sellableProduct(ENDPOINTS.storePooled, TENANTS.acme.slug);
@@ -103,7 +129,7 @@ test.describe('one shopper, two pooled merchants', () => {
     await addToBasket(page, ENDPOINTS.storefront, TENANTS.acme.slug, product.acme);
     await shot(page, '02-acme-catalog');
 
-    const purchase = await checkout(page, ENDPOINTS.storefront, TENANTS.acme.slug);
+    const purchase = await checkout(page, ENDPOINTS.storefront, TENANTS.acme.slug, SHOPPER);
     expect(purchase.payment).toBe('paid');
     // Per-tenant, gapless numbering from acme's own counter, never a global sequence (BG2).
     // On a freshly started AppHost A that is 1.
@@ -124,7 +150,7 @@ test.describe('one shopper, two pooled merchants', () => {
     await expect(page.locator('#phone')).toHaveCount(0);
     await shot(page, '04-borg-checkout-same-account');
 
-    const purchase = await checkout(page, ENDPOINTS.storefront, TENANTS.borg.slug);
+    const purchase = await checkout(page, ENDPOINTS.storefront, TENANTS.borg.slug, SHOPPER);
     expect(purchase.payment).toBe('paid');
     // Borg counts from its OWN counter: on a fresh stack both stores' first order is 1. Same
     // process, same database, separate counters (BG2).

@@ -1,14 +1,17 @@
 # Morning
 
-Thirteen tasks ran overnight. The build is up, the demo works, and there is one place where the
-README told you a lie — it is fixed, and what it was is written down below rather than quietly
-corrected.
+**Read this file first.** It is the entry point: how to start the whole thing, what the demo is,
+what is verified, and what is still broken. Then `docs/decisions-made-overnight.md` for the full
+list of judgement calls, then `lessons/` if you are about to write code.
 
-Everything in **What works** was re-verified this morning, on this machine, between 11:49 and
-11:59. Nothing here is inherited from an agent's own report.
+This is **v2.0.0**, and it is a different topology from v1.0.0. Two pooled tenants and **two**
+dedicated ones run at once; every port but three is assigned by Aspire at run time, so there is no
+table of ports to read and every address is looked up; and both browser front ends sign in through
+the store's own OIDC round trip, so the stack runs on a **real issuer** with shopping and
+dashboards working, not only on the stub.
 
-Read this file, then `docs/decisions-made-overnight.md` if you want the full list of judgement
-calls, then `lessons/` if you are about to write code.
+Everything in **What works** was measured on this machine during the run that produced this file.
+Nothing here is inherited from an agent's own report.
 
 ---
 
@@ -18,19 +21,41 @@ calls, then `lessons/` if you are about to write code.
 cd ~/Desktop/projects/mercatus
 pnpm install                       # ~3s warm
 
-# A -- control plane, identity, fake-bank, the pooled store, storefront,
-#      dashboard, console, and the edge on 8080
+# A -- control plane, identity (Logto), fake-bank, the POOLED store serving acme and borg,
+#      the storefront, the merchant dashboard, the platform console, and Traefik on 28080
 ( cd aspire/AppHostA && aspire run --detach --non-interactive --nologo --format Json )
 
-# B -- "Zenith's VPS": its own Postgres, the same store, DEPLOYMENT_MODE=dedicated
-( cd aspire/AppHostB && aspire run --detach --non-interactive --nologo --format Json )
+# B, twice -- two dedicated boxes, each with its own Postgres, its own store process and its
+#             own hostname. One command each; no token, no curl.
+aspire/scripts/run-dedicated.sh zenith
+aspire/scripts/run-dedicated.sh orion
 ```
 
-A is ready in ~15 s, B in ~15 s more. `--detach` is not optional: without it the command never
-returns. Readiness, in one loop:
+A is ready in ~15 s and each B in ~10 s more. `--detach` is not optional: without it the command
+never returns.
 
-A's surfaces all come through the edge, so they are the one set of addresses still worth typing.
-B's two are Aspire-assigned, so they are read out of the address book the run wrote:
+`run-dedicated.sh` exists because the Aspire CLI treats a running AppHost as a singleton keyed on
+the path of its apphost file — a second `aspire run` on `aspire/AppHostB/apphost.cs` stops the
+first, `--isolated` and all. The script generates `aspire/AppHostB-<slug>/` from that one file
+(gitignored, rewritten every run) so two can serve at once.
+
+### Where everything is
+
+**Nothing but the edge and identity has a port you can write down.** Every service port is
+Aspire-assigned, so each AppHost publishes its own half of the address book as it starts:
+
+```bash
+cat .stack/apphost-a.json        # platform, store_pooled, bank, storefront, dashboard, admin, edge
+cat .stack/apphost-zenith.json   # store, storefront, dashboard -- and the tenant they serve
+cat .stack/apphost-orion.json
+```
+
+A's surfaces are also reachable through the edge on **28080**, which is the one set of addresses
+worth typing. A dedicated box answers on a hostname of its OWN — `<slug>.localtest.me:<port>`,
+which resolves to loopback with no `/etc/hosts` entry — because cookies are scoped by host and
+ignore the port, so several storefronts on `localhost` would share one cookie jar.
+
+Readiness, in one loop, addresses read rather than assumed:
 
 ```bash
 E=${MERCATUS_EDGE_PORT:-28080}
@@ -40,98 +65,148 @@ for u in http://platform.localtest.me:$E/health \
          http://shop.localtest.me:$E/t/acme \
          http://dash.localtest.me:$E/ \
          http://console.localtest.me:$E/ \
-         "$(jq -r .endpoints.store .stack/apphost-zenith.json)/health" \
-         "$(jq -r .endpoints.storefront .stack/apphost-zenith.json)/t/zenith"; do
+         "$(jq -r .endpoints.store      .stack/apphost-zenith.json)/health" \
+         "$(jq -r .endpoints.storefront .stack/apphost-zenith.json)/t/zenith" \
+         "$(jq -r .endpoints.store      .stack/apphost-orion.json)/health" \
+         "$(jq -r .endpoints.storefront .stack/apphost-orion.json)/t/orion"; do
   printf '%s -> %s\n' "$u" "$(curl -s -o /dev/null -m 4 -w '%{http_code}' "$u")"
 done
 ```
 
-All eight answer 200. And back down, each from its own directory — B first if you want B's
-credential to stay valid:
+All ten answer 200. And back down — the dedicated boxes first, so their credentials stay valid:
 
 ```bash
-( cd aspire/AppHostB && aspire stop --non-interactive --nologo )
+aspire/scripts/stop-dedicated.sh orion
+aspire/scripts/stop-dedicated.sh zenith
 ( cd aspire/AppHostA && aspire stop --non-interactive --nologo )
 docker ps            # should show only chess-trainer, which is not ours
 ```
 
 ### The demo, step by step
 
-1. **Shop.** `http://shop.localtest.me:8080/t/acme` → sign in at `/signin` with any `+90…`
-   phone → add to basket → check out. You are handed fake-bank's hosted page (it opens on
-   `127.0.0.1:4004` — see **EW**), click **approve**, then browser **Back**: the checkout page's
-   `pageshow` handler takes you to the confirmation, which says `paid`.
+Addresses below are the edge's, plus two `jq` lookups for the dedicated boxes:
+
+```bash
+E=${MERCATUS_EDGE_PORT:-28080}
+ZEN=$(jq -r .endpoints.storefront .stack/apphost-zenith.json)
+ORI=$(jq -r .endpoints.storefront .stack/apphost-orion.json)
+```
+
+1. **Shop.** `http://shop.localtest.me:$E/t/acme` → **Sign in** → you are sent to the ISSUER and
+   brought straight back. Under the default stub adapter that is the store's own dev page, which
+   asks for a phone and no password; under `oidc` it is Logto. Add to basket, check out. You are
+   handed fake-bank's hosted page (it opens on the bank's direct address — see **EW**), click
+   **approve**, then browser **Back**: the checkout page's `pageshow` handler takes you to the
+   confirmation, which says `paid`.
 2. **Buy from the second shop** at `/t/borg` without signing in again. Same account, one order at
    each store — that is `Q20` and `BI2` working.
-3. **Merchant.** `http://dash.localtest.me:8080` → sign in as slug `acme`, role `owner`. The order
-   is there with a Payment column. `borg`'s orders are not, and cannot be reached.
-4. **Operator.** `http://console.localtest.me:8080` → sign in → flip `acme` to **passive**. Within
+3. **Merchant.** `http://dash.localtest.me:$E` → enter slug `acme` → **Sign in**, which is the
+   same round trip. The order is there with a Payment column. `borg`'s orders are not, and cannot
+   be reached.
+4. **Operator.** `http://console.localtest.me:$E` → sign in → flip `acme` to **passive**. Within
    one poll (5 s) the storefront refuses checkout and keeps browsing open; the dashboard stays
    fully usable. Flip it back.
-5. **The flagship.** Buy something on the dedicated store, `http://127.0.0.1:3002` (Zenith, "their
-   server", its own database, AppHost B). Then kill our whole control plane:
+5. **The flagship.** Buy at `$ZEN/t/zenith` and at `$ORI/t/orion` — two customer-owned boxes, two
+   databases, two ports nobody chose. Then kill our whole control plane:
 
    ```bash
    ( cd aspire/AppHostA && aspire stop --non-interactive --nologo )
    ```
 
-   Buy again. The order is placed, numbered and priced; only the payment waits (202 — payments are
-   ours and never run on a customer's server, `CE2`). Browsing stays 200 throughout. After
-   `LICENCE_GRACE_SECONDS` — 60 s here, 72 h by default — checkout degrades to **503
-   `CONTROL_PLANE_UNREACHABLE`** and the dashboard goes read-only.
+   Buy again, at both. The orders are placed, numbered and priced; only the payment waits (202 —
+   payments are ours and never run on a customer's server, `CE2`). Browsing stays 200 throughout.
+   After `LICENCE_GRACE_SECONDS` — 60 s here, 72 h by default — checkout degrades to **503
+   `CONTROL_PLANE_UNREACHABLE`** and the dashboards go read-only.
 
-   **To recover you must restart B as well as A.** This is the correction; **EV** explains why.
+   **To recover you must restart the dedicated boxes as well as A** (**EV**): `aspire stop` on A
+   destroys A's Postgres, so the rebuilt control plane has never heard of either installation.
 
    ```bash
    ( cd aspire/AppHostA && aspire run --detach --non-interactive --nologo --format Json )
-   ( cd aspire/AppHostB && aspire stop --non-interactive --nologo )
-   ( cd aspire/AppHostB && aspire run --detach --non-interactive --nologo --format Json )
+   aspire/scripts/stop-dedicated.sh zenith && aspire/scripts/run-dedicated.sh zenith
+   aspire/scripts/stop-dedicated.sh orion  && aspire/scripts/run-dedicated.sh orion
    ```
 
-   B re-registers on start, `GET /installations` goes back to `total: 1`, and the store is
+   Both re-register on start, `GET /installations` goes back to `total: 2`, and each store is
    `active/healthy` with `checkout: open` on the next poll.
+
+6. **A THIRD dedicated tenant, with zero edits to AppHost A.** `zenith` and `orion` are seeded
+   into the control plane's database so the dev loop needs no token; any other slug is four
+   authenticated calls and then one command. The full recipe is in the README and in the header of
+   `aspire/scripts/run-dedicated.sh`.
 
 ### The three checks
 
 ```bash
-pnpm -r test                    # 244 tests, 0 skipped, ~35s. No stack needed.
+pnpm -r test                    # 261 tests, 0 skipped, ~35s. No stack needed.
 pnpm turbo run typecheck lint   # 26/26
-pnpm test:e2e                   # 16 Playwright tests in real Chrome, ~40s. Needs both AppHosts up.
+pnpm test:e2e                   # 22 Playwright tests in real Chrome, ~1.6 min, against the live
+                                # four-tenant topology. Needs AppHost A and BOTH dedicated boxes.
 ```
+
+`pnpm test:e2e` **fails** — it does not skip — if a dedicated instance it is claiming is not
+running. What it claims is `MERCATUS_E2E_DEDICATED`, default `zenith,orion`; narrowing it is an
+explicit act that the skip reason quotes back at you.
+
+### The same demo on a REAL issuer
+
+The default adapter is the stub, and everything above works on it. Switching to Logto changes
+nothing about how the front ends sign in — that is the whole of the v2.0.0 repair — so the same
+topology runs on a real issuer:
+
+```bash
+# stop everything first, then:
+MERCATUS_AUTH_ADAPTER=oidc ( cd aspire/AppHostA && aspire run --detach --non-interactive --nologo --format Json )
+MERCATUS_AUTH_ADAPTER=oidc aspire/scripts/run-dedicated.sh zenith
+MERCATUS_AUTH_ADAPTER=oidc aspire/scripts/run-dedicated.sh orion
+
+MERCATUS_E2E_REQUIRE_OIDC=1 pnpm test:e2e     # tests/05-oidc-four-tenants.spec.ts
+```
+
+`05-oidc-four-tenants.spec.ts` signs one account in at Logto ONCE, buys at all four shops across
+three origins, checks the subject is the same string at every one of them, and signs four
+merchants in at four dashboards. It DETECTS the adapter from where `/auth/login` redirects, so it
+skips on the stub and says which command turns that around; `MERCATUS_E2E_REQUIRE_OIDC=1` makes
+that skip a failure, which is what an acceptance run should use.
 
 Plus two single-purpose gates worth knowing about:
 
 ```bash
 MERCATUS_LEAK_SABOTAGE=products pnpm --filter @mercatus/db-store test   # must go RED
-packages/identity/scripts/login-round-trip.sh                          # a real OIDC code flow
+packages/identity/scripts/shopper-sso-across-planes.sh <pooled> <dedicated> <logto>
 ```
 
 ---
 
-## 2. What works — verified this morning
+## 2. What works — measured, not claimed
 
 | | Evidence |
 |---|---|
-| `pnpm -r test` | **244 passed, 0 skipped**, exit 0. core 26, contracts 25, db-platform 11, fake-bank 17, platform 22, db-store 98, store 45 |
+| `pnpm -r test` | **261 passed, 0 skipped**, exit 0. core 26, contracts 25, db-platform 11, fake-bank 17, platform 39, db-store 98, store 45 |
 | `pnpm turbo run typecheck lint` | 26 tasks, 26 successful |
-| `pnpm test:e2e` | **16 passed in 40.6 s**, real Chrome, headless, against both AppHosts live. The relaunched control plane it leaves behind died with the AppHost, as its supervisor promises |
-| AppHost A | up in ~15 s; all six edge hostnames and all seven direct ports 200; Logto `/api/status` 204 |
-| AppHost B | up in ~15 s, **re-registered by itself** from a credential file naming a database that had been destroyed the night before |
+| `pnpm test:e2e` (stub) | **22 passed in 1.6 min**, real Chrome, headless, against two pooled and two dedicated tenants live |
+| `pnpm test:e2e` (oidc) | the four-tenant demo in a browser on a real issuer: one account, four shops, three origins, four dashboards |
+| AppHost A | up in ~15 s; six edge hostnames 200; Logto `/api/status` 204 |
+| Two dedicated boxes | one command each, ~10 s each, registered with the control plane at Aspire-assigned ports and hostnames of their own |
+| Host pinning | a `baseUrl` on another host is refused with a generic 401 and does NOT burn the bootstrap token; the same token then registers on the pinned host |
 | Tenant isolation | 98 db-store tests, including the F1 composite-FK attack cases, against a real Postgres per run |
-| Degradation | reproduced end to end this morning, with timings, in **EV** |
-| Cleanup | after `aspire stop` on both, `docker ps` shows only `chess-trainer` and none of our ports are held |
+| Deprovisioning | `DELETE /installations/:id` → 204, and that instance's Logto client is gone (`CK1`) |
+| Cleanup | after stopping all three AppHosts, `docker ps` shows only `chess-trainer` and none of our ports are held |
 
-The five headline claims from the README, honestly graded:
+The five headline claims, honestly graded:
 
 1. **Tenant isolation that isn't a `WHERE` clause** — yes. RLS, forced, tenant from the token, a
    suite that has been *seen to fail* under `MERCATUS_LEAK_SABOTAGE`, and a grep test that fails
    the build if application code writes `where tenant_id`.
 2. **One image, two deployment modes** — yes. The same `apps/store` source runs pooled on A and
    dedicated on B, one environment variable apart.
-3. **Centralised identity** — real, but **only exercised by a shell script**
-   (`packages/identity/scripts/login-round-trip.sh`). The browser suite drives the stub adapter.
-   See **EZ**.
-4. **Graceful degradation** — yes, and it is the best thing in the build. Caveat in **EV**.
+3. **Centralised identity** — **yes, in a browser, on both planes, as of v2.0.0**. Until this
+   release the storefront and the dashboard could only mint tokens through `/dev/login/*`, which
+   exists solely under `AUTH_ADAPTER=stub`: turning the real issuer on turned sign-in off, and
+   "real OIDC" was demonstrable only by a curl script with no shopping and no dashboards. Both
+   front ends now go through the store's own `/auth/*`, and the store is the only OIDC client in
+   the topology.
+4. **Graceful degradation** — yes, and it is still the best thing in the build. Caveat in **EV**.
 5. **Failure injection for payments** — yes. `approve` / `decline` / `bad-hash` / `no-callback` /
    `drop`, chosen from a query parameter or the hosted page.
 
@@ -139,71 +214,29 @@ The five headline claims from the README, honestly graded:
 
 ## 3. What does not work
 
-No optimism in this section. Six things, worst first.
+No optimism in this section. The full table, with file paths and what each one costs, is
+`docs/OPEN-DEFECTS.md` under "Still shipping at v2.0.0". In one line each:
 
-**EV.** **The demo's last beat needed a correction, and the README now carries it.** The README
-said: stop A, buy again, wait out the grace window, "bring A back and it returns to
-`active/healthy` within one poll." That is false, and I reproduced it this morning.
-`aspire stop` on A destroys A's Postgres, so a rebuilt control plane has never heard of the
-installation: `GET /installations` answers `{"items":[],"total":0}` and B's stored token gets a
-**404**. A *still-running* B keeps polling — `lastCheckedAt` advanced to 11:54:25 — but
-`lastSuccessAt` stayed frozen at 11:52:25, so the dedicated store sat at `state: read_only` and
-`checkout: blocked_unreachable` indefinitely. Re-registration only happens at B's **start**
-(`apps/store/src/provision.ts`), so bringing A back never recovers a running B. Restarting B fixed
-it in one poll: `total: 1`, `healthy`, `checkout: open`. The README's demo script now says so. The
-real fix is one small change, and it is **FB** below.
+- **EV** — a *running* dedicated box never recovers when the control plane is rebuilt;
+  re-registration happens only at its start. Restarting it fixes it in one poll.
+- **EW** — one port covers HTML and nothing else: every SPA XHR and the whole payment leg leave
+  the edge.
+- **EX** — CORS is `origin: true, credentials: true` on every API, which is also what keeps EW
+  invisible.
+- **CE2** — the storefront signs fake-bank requests itself, including on a box whose owner has
+  root. `POST /payments/proxy` was never built. This is the one a security reviewer finds first.
+- **EY** — the merchant cannot see who bought; the data is in the store and the gap is in the
+  dashboard.
+- **EZ**, narrowed — the OIDC path now has browser coverage (`05-oidc-four-tenants.spec.ts`), but
+  `pnpm -r test` still contains none of the browser suite, so the headline command is not the
+  headline check.
 
-**EW.** **"Everything of A's answers on one port" is true of HTML documents and of nothing else.**
-Two leaks off the edge, both verified live:
+Still open and unchanged from the RLS verifier: **F4** (no RLS on the control plane — fine while
+the only consumer is the operator console), **F5**, **F6**. Not built: tier 2 custom domains,
+`POST /payments/proxy`, a payments screen in the console, a screen for issuing bootstrap tokens.
 
-- A checkout driven entirely through `shop.localtest.me:8080` answered
-  `"paymentUrl": "http://127.0.0.1:4004/pay/…"`. fake-bank builds that URL from the request it
-  received (`apps/fake-bank/src/routes/payments.ts:70`) and the storefront calls it at
-  `FAKE_BANK_URL=http://127.0.0.1:4004`. The `bank.localtest.me:8080` route exists and the flow
-  never uses it.
-- The dashboard and console SPAs are *served* through the edge and then call the APIs direct:
-  `VITE_STORE_API_URL=http://127.0.0.1:4002`, `VITE_PLATFORM_URL=http://127.0.0.1:4001`, both set
-  in `aspire/AppHostA/apphost.cs`.
-
-On a laptop it is invisible. Expose or firewall only `:8080` and checkout plus every dashboard XHR
-breaks. The README's edge table now says which parts go through the edge.
-
-**EX.** **CORS is wide open on every API.** `origin: true` with `credentials: true` in
-`packages/core/src/http/server.ts:76`. Any origin is reflected and allowed to send credentials.
-The comment calls it a POC compromise, which it is — and it is also exactly what keeps **EW**
-invisible, because nothing ever complains about the cross-origin call.
-
-**EY.** **The merchant cannot see who bought.** The order detail at
-`dash.localtest.me:8080/orders/<id>` renders the number, the status, the payment reference, the
-date, the lines and the total — and no shopper name, phone or identifier anywhere. The store holds
-the shopper (the storefront signs them in by phone; `shoppers` is an RLS table with leak-suite
-cases of its own), so this is a gap in the dashboard, not in the data. "Which of my customers
-placed this order" is currently unanswerable in the merchant UI.
-
-**EZ.** **A green `pnpm -r test` does not include the browser demo.** `packages/e2e` declares
-`test:e2e` and no `test` script, so the recursive run covers **13 of 14** workspace projects and
-stops at unit/integration level. The storefront, the dashboard, the console, the edge and the
-outage scenario are exercised only by `pnpm test:e2e`, by hand, against a live stack. It fails
-loudly rather than silently — global setup refuses and names the missing `aspire run` — but the
-headline command everyone runs is not the headline check. The OIDC path has no automated coverage
-at all; `login-round-trip.sh` is a shell gate somebody has to remember to run.
-
-**FA.** **Known and still open, in descending order of how much they should bother you.**
-
-| | |
-|---|---|
-| `CE2` violation | the storefront signs fake-bank requests itself with a shared `FAKE_BANK_HMAC_SECRET`, **including on the dedicated box**, because `POST /payments/proxy` was never built. A merchant with root on their own server holds a key that can sign payment requests |
-| `F4` | the control plane has **no RLS at all** — six tables, four carrying `tenant_id`, full CRUD for the app role. Fine while the only consumer is the operator console; the next leak comes from here the day the platform API serves a merchant-facing view |
-| `F5` | inserting a product with another tenant's known product UUID fails with `duplicate key`, not an RLS error — an existence oracle against a UUID you already hold |
-| `F6` | a non-UUID `app.tenant_id` raises `invalid input syntax for type uuid` at query time rather than at `set_config` time. Fails closed, surfaces far from the cause |
-| not built | tier 2 (custom domains), `POST /payments/proxy`, any payments screen in the console, a screen for issuing bootstrap tokens, `PATCH /api/settings` (this one deliberately — `tenants` has no RLS policy, so the app role is SELECT-only and the edit belongs on the platform API) |
-| git | the repo is **3 commits ahead of `origin/develop` and unpushed** — the standing instruction to every agent was "NEVER push", and there is a real remote (`git@github.com:erkantaylan/mercatus.git`). Your call, not ours |
-
-Two small things found while checking: `diary/12-repair-pass.md` and `lessons/12-repair-pass.md`
-both give the suite total as 235, but their own per-package breakdown adds to 244, which is what
-the suite reports. And `.instance/zenith.json` always names an installation in whatever platform
-database existed when B last started — that is now harmless (B checks and re-registers), and it is
-deliberately left in place because leaving it is what proves the fix on the next run.
+**Git.** The repo is ahead of `origin/develop` and unpushed. The standing instruction to every
+agent was NEVER push, and there is a real remote. Your call, not ours.
 
 ---
 

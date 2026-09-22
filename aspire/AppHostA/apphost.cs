@@ -276,6 +276,11 @@ var platform = Node("api-platform", "platform")
     // first registration, not at boot, and its absence is a warning in the log rather than a
     // failed start (CG1).
     .WithEnvironment("LOGTO_MANAGEMENT_PATH", $"../../{identityManagement}")
+    // Dev only, and the same literal the identity bootstrap gives the seeded tenants' owners: a
+    // tenant bought at run time gets a `<slug>_owner` user too, so its merchant can sign in to
+    // their own dashboard under AUTH_ADAPTER=oidc. Unset in a published topology, where a
+    // merchant is invited and sets their own password.
+    .WithEnvironment("IDENTITY_DEV_PASSWORD", "Mercatus-dev-1")
     .WithReference(dbPlatform)
     .WaitFor(dbPlatform)
     .WaitForCompletion(migratePlatform)
@@ -420,8 +425,13 @@ var storefront = Web("web-storefront-pooled", "storefront", "node_modules/next/d
     .WaitFor(storePooled);
 
 // 0.0.0.0, not 127.0.0.1: Traefik reaches these from inside a container over the docker host
-// gateway, and the demo is supposed to be reachable through ONE port (dash.localtest.me:8080,
-// console.localtest.me:8080). strictPort in each vite.config.ts is what keeps the number fixed.
+// gateway, and the demo's HTML is supposed to be reachable through ONE port
+// (dash.localtest.me:28080, console.localtest.me:28080 -- MERCATUS_EDGE_PORT). strictPort in each
+// vite.config.ts is what keeps a Vite dev server on the port Aspire assigned it.
+//
+// ONE PORT COVERS THE HTML, NOT THE XHR (defect EW, docs/OPEN-DEFECTS.md). Each SPA is handed its
+// API's direct address, so the documents come through the edge and the requests that follow do
+// not. Unfixed in v2.0.0 and stated rather than implied.
 var dashboard = Web("web-dashboard-pooled", "dashboard",
         "node_modules/vite/bin/vite.js", "--host", "0.0.0.0")
     .WithEnvironment("VITE_STORE_API_URL", storePooledUrl)

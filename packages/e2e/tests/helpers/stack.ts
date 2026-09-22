@@ -69,6 +69,8 @@ export const ENDPOINTS = {
   dashboard: endpoint('dashboard'),
   admin: endpoint('admin'),
   edge: endpoint('edge'),
+  /** The issuer, for the one thing a suite legitimately asks of it: end this browser's session. */
+  logto: endpoint('logto'),
 } as const;
 
 /**
@@ -208,6 +210,44 @@ export async function reachable(url: string, path = '/health'): Promise<boolean>
   return (await probe(url, path)).ok;
 }
 
+/**
+ * WHICH ISSUER A STORE IS REALLY TALKING TO, asked of the store rather than of an environment
+ * variable this process happens to hold.
+ *
+ * `/auth/login` is a 302 under both adapters and where it points is the answer: the store's own
+ * `/dev/login` page under `stub`, `/oidc/auth` on Logto under `oidc`. It stays right if the
+ * adapter is switched without restarting this suite's shell.
+ */
+export async function adapterOf(storeApi: string): Promise<'stub' | 'oidc' | 'unknown'> {
+  const response = await fetch(`${storeApi}/auth/login?audience=shopper&via=store&next=%2F`, {
+    redirect: 'manual',
+    signal: AbortSignal.timeout(8000),
+  }).catch(() => null);
+  const location = response?.headers.get('location') ?? '';
+  if (location.includes('/dev/login')) return 'stub';
+  if (location.includes('/oidc/auth')) return 'oidc';
+  return 'unknown';
+}
+
+/**
+ * Why a stub-only spec is not running, or `''` when it is.
+ *
+ * `01` through `04` mint a FRESH shopper per run so that "this person has one order at this
+ * store" stays true on the tenth run as well as the first. Under a real issuer that person would
+ * have to be created at the issuer per run, through the Management API, which is a credential
+ * this suite has no business holding. `05-oidc-four-tenants.spec.ts` covers the same ground on
+ * `oidc` with the seeded account and assertions that are deltas rather than absolutes.
+ *
+ * So: two runs, and each one says which it is. A skip here always names the reason.
+ */
+export async function stubOnlyReason(storeApi: string): Promise<string> {
+  const adapter = await adapterOf(storeApi);
+  return adapter === 'oidc'
+    ? 'this stack is on AUTH_ADAPTER=oidc; the fresh-shopper-per-run specs are the stub demo. ' +
+        'The same four-tenant demo on a real issuer is tests/05-oidc-four-tenants.spec.ts.'
+    : '';
+}
+
 async function json<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
     ...init,
@@ -295,7 +335,17 @@ export async function sellableProduct(storeApi: string, slug: string): Promise<s
 }
 
 export async function staffOrderCount(storeApi: string, slug: string): Promise<number> {
-  const token = await staffToken(storeApi, slug);
+  return orderCountWithToken(storeApi, await staffToken(storeApi, slug));
+}
+
+/**
+ * The same question, asked with a token the caller already has.
+ *
+ * `staffToken` above posts to `/dev/login/staff`, which exists only while `AUTH_ADAPTER=stub` --
+ * so under a real issuer the suite asks with the token the MERCHANT's browser was given
+ * (`dashboardToken` in helpers/shop.ts). Same route, same audience, different way in.
+ */
+export async function orderCountWithToken(storeApi: string, token: string): Promise<number> {
   const orders = await json<{ total: number }>(`${storeApi}/api/orders`, {
     headers: { authorization: `Bearer ${token}` },
   });

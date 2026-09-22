@@ -28,6 +28,7 @@ import {
   deleteApplication,
   ensureInstallationClient,
   ensureOrganizationBySlug,
+  ensureOrganizationOwner,
   LogtoManagementClient,
   reconcileRedirectUris,
   APPLICATION_NAMES,
@@ -284,6 +285,23 @@ export class IdentityProvisioner {
       organizationId = await ensureOrganizationBySlug(client, input.tenantSlug);
     } catch (error) {
       warnings.push(`organization for ${input.tenantSlug} could not be resolved: ${message(error)}`);
+    }
+
+    // AND A MERCHANT WHO CAN SIGN IN TO IT. An organization with no owner is a store whose
+    // merchant has no way into their own dashboard under `AUTH_ADAPTER=oidc` -- invisible under
+    // the stub, which signed in by slug. A warning and not an exception, for the same reason the
+    // shared applications are: the instance's client is real either way, and an instance told
+    // "no OIDC" because a user could not be created would come up with none at all.
+    if (organizationId !== null && this.#config.devOwnerPassword !== undefined) {
+      try {
+        await ensureOrganizationOwner(client, {
+          slug: input.tenantSlug,
+          organizationId,
+          password: this.#config.devOwnerPassword,
+        });
+      } catch (error) {
+        warnings.push(`owner user for ${input.tenantSlug} was not created: ${message(error)}`);
+      }
     }
 
     return {

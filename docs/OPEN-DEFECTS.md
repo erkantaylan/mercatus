@@ -160,3 +160,27 @@ where the next leak comes from.**
 applied the migrations, and attacked the schema as `mercatus_app` rather than trusting the
 builder's report. It also confirmed the project's own suite genuinely runs and passes — the tests
 were not fabricated, just incomplete.*
+
+---
+
+## Still shipping at v2.0.0 — stated, not fixed
+
+Repair round 1 fixed one defect class (both browser front ends could only sign in through routes
+that exist under `AUTH_ADAPTER=stub`) and deliberately did not touch these. They are listed here,
+with what each one actually costs, so that "accepted with known defects" is a sentence somebody
+wrote rather than something a reader has to infer.
+
+| | What is wrong | What it costs today | Where |
+|---|---|---|---|
+| **EV** | a **running** AppHost B never recovers when the control plane is rebuilt. Re-registration happens only at B's start | `aspire stop` on A destroys A's Postgres, so the installation is gone and B's instance token answers 401 for ever. Restarting B fixes it in one poll. The e2e suite's outage test kills the platform PROCESS instead, which recovers correctly | `apps/store/src/provision.ts`; the fix is the same branch in `apps/store/src/agents/licence-poll.ts` |
+| **EW** | one port covers HTML and nothing else | every SPA XHR and the whole payment leg leave the edge: `VITE_STORE_API_URL`, `VITE_PLATFORM_URL` and `FAKE_BANK_URL` are direct addresses. Firewall everything but `:28080` and checkout breaks | `aspire/AppHostA/apphost.cs` |
+| **EX** | CORS is `origin: true, credentials: true` on every API | any origin is reflected and allowed to send credentials. It is also what keeps EW invisible, because nothing ever complains about the cross-origin call | `packages/core/src/http/server.ts` |
+| **CE2** | the storefront signs fake-bank requests itself, **including on a customer-owned box** | a merchant with root on their own server holds a key that can sign payment requests that bill us. `POST /payments/proxy` was never built | `aspire/AppHostB/apphost.cs` sets `FAKE_BANK_HMAC_SECRET` on the storefront |
+| **EY** | the merchant cannot see who bought | the order detail renders number, status, payment reference, lines and total, and no shopper. The data is in the store and RLS-protected; this is a gap in the dashboard | `apps/dashboard/src/routes/orders.$id.tsx` |
+
+**EZ is narrower than it was.** "The OIDC path has no automated coverage at all" is no longer
+true: `packages/e2e/tests/05-oidc-four-tenants.spec.ts` drives the whole four-tenant demo in a
+real browser against `AUTH_ADAPTER=oidc`, and `MERCATUS_E2E_REQUIRE_OIDC=1` makes its absence a
+failure rather than a skip. What remains of EZ is that `pnpm -r test` still does not include any
+of the browser suite, because `packages/e2e` declares `test:e2e` and no `test` script — the
+headline command is still not the headline check.

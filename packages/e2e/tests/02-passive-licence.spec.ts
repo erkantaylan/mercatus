@@ -25,6 +25,7 @@ import {
   setTenantLicence,
   shopperCheckoutState,
   staffToken,
+  stubOnlyReason,
 } from './helpers/stack.js';
 
 const SLUG = TENANTS.acme.slug;
@@ -32,6 +33,22 @@ const SLUG = TENANTS.acme.slug;
 test.describe.configure({ mode: 'serial' });
 
 test.describe('a passive tenant blocks checkout, not the dashboard', () => {
+  /**
+   * This file is the STUB adapter's demo. It mints a fresh shopper per run so its counts stay
+   * true on the tenth run as well as the first, which under a real issuer would mean creating a
+   * user at that issuer per run. `tests/05-oidc-four-tenants.spec.ts` is the same four-tenant
+   * demo on `oidc`, with the seeded account and deltas instead of absolutes.
+   *
+   * A skip here always names the reason, and the reason names the file that DOES cover it.
+   */
+  let stubOnly = '';
+  test.beforeAll(async () => {
+    stubOnly = await stubOnlyReason(ENDPOINTS.storePooled);
+  });
+  test.beforeEach(() => {
+    test.skip(stubOnly !== '', stubOnly);
+  });
+
   test.afterAll(async () => {
     // Whatever happened above, leave the tenant sellable for whoever runs next.
     await setTenantLicence(SLUG, 'active');

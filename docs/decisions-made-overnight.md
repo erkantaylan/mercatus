@@ -940,3 +940,70 @@ Decisions taken while putting the dedicated instance on Logto ahead of any regis
   seeing only its own orders, and BOTH dedicated stores completing a checkout with the control
   plane stopped. It skips itself unless both `.stack/apphost-zenith.json` and
   `.stack/apphost-orion.json` are answering, exactly as `03` skips without one.
+
+## Repair round 1 (after the v2.0.0 acceptance run)
+
+- **The STORE is the only OIDC client in the topology, and both front ends sign in through it.**
+  The storefront minted shopper tokens at `${store}/dev/login/shopper` and the dashboard staff
+  tokens at `/dev/login/staff`; both routes are registered only while `AUTH_ADAPTER=stub`, so
+  `MERCATUS_AUTH_ADAPTER=oidc` answered 502 on shopper sign-in and 404 on merchant sign-in, on
+  both planes — "real OIDC on both planes" and "one shopper account buying from four shops in a
+  browser" could never be true at the same time. The alternative considered and rejected was
+  giving each front end its own OIDC client: the dashboard is a bundle served to a browser and a
+  secret in one is not a secret, and the storefront holding a per-instance client secret would put
+  a second credential on a customer-owned box (`CE1`). So: `GET /auth/login?via=…` picks which of
+  three registered redirect URIs the code comes back to, and `POST /auth/exchange` hands the
+  store's own session back as a TOKEN for a front end on another origin. One code path, both
+  adapters.
+- **A bearer token the adapter rejects is retried against the store's own `SessionIssuer`.** Same
+  credential as the session cookie, different transport. A browser front end on another origin
+  cannot be sent this store's host-only cookie, and the alternative — a `Domain=` cookie shared
+  across subdomains — would hand every instance on the domain every other instance's session.
+- **`GET /dev/login` is the stub's sign-in PAGE, and it is what made the stub and a real issuer
+  interchangeable.** `StubAuthAdapter.authorizeUrl()` has pointed at that address since task 03
+  and nothing ever served it, so the store's own `/auth/*` round trip 404'd under the stub — which
+  is why both front ends called the two POST routes directly in the first place. It is plain
+  server-rendered HTML with no script, deliberately: there is nothing to hydrate, so a browser
+  driver cannot click it before it works.
+- **Stub authorization codes percent-encode the subject.** `stub:<kind>:<subject>[:<tenant>]` was
+  split on `:`, and both of this repo's subjects contain one (`dev-staff:acme`,
+  `dev-shopper:+905550000001`), so the first real sign-in through the stub's own authorization
+  page would have signed everybody in as `dev-staff`. Invisible until now because nothing had ever
+  driven that path end to end.
+- **AppHost B publishes `<slug>.localtest.me:<aspire port>` for all three of its browser-facing
+  surfaces, and `expectedHost` follows.** Phase 3 solved the cookie-jar collision by rewriting the
+  hostname inside the e2e helper; with the browser-facing addresses now REGISTERED as redirect
+  URIs, a rewrite there would send the shopper to an address the issuer was never told about. The
+  AppHost publishes the truth instead, the helper takes it as published, and a real deployment
+  gives each box a hostname anyway.
+- **`zenith` AND `orion` are seeded into the control plane's database.** `aspire stop` on AppHost A
+  destroys A's Postgres, so a rebuilt control plane forgets every installation. zenith recovered by
+  itself because its dev bootstrap token was re-seeded; orion, created by four curls at run time,
+  did not — every rebuild cost the operator those four calls again and left a stale
+  `.instance/orion.json` pointing at an installation that no longer existed. Seeding both makes the
+  four-tenant topology restartable. A THIRD dedicated tenant is still the four calls: the list is
+  the dev loop, not the product.
+- **The control plane creates a `<slug>_owner` user for a tenant bought at run time**, not only the
+  organization. `ensureOrganizationBySlug` (phase 3) left the hole one step further on: under the
+  stub a runtime tenant looked complete because the dashboard signed in by slug, and under `oidc`
+  its merchant had no account at the issuer at all. Gated on `IDENTITY_DEV_PASSWORD`, which AppHost
+  A sets and a published topology does not — in the product a merchant is invited and sets their
+  own.
+- **The e2e run DECLARES which dedicated instances it is claiming.** `MERCATUS_E2E_DEDICATED`,
+  default `zenith,orion`. Every test in `04-two-dedicated-tenants.spec.ts` used to open with
+  `test.skip(!bothUp, …)`, so the everyday one-box loop reported the whole file green having proved
+  none of its five claims. A claimed instance that is not answering now fails global setup, and the
+  only route to a skip is to have narrowed the variable on the command line — which the skip reason
+  quotes back. Same shape as `BL1`, one level up.
+- **There is no guest checkout any more.** `POST /api/checkout` used to accept a phone number and
+  mint a session on the spot; there is no way to mint one without the issuer now, and a phone was
+  never an identity (`BI2`). The phone stays on the order as contact detail, asked for by the
+  checkout form when the issuer's subject does not spell one out — which it does under the stub
+  and does not under Logto.
+- **`packages/e2e/tests/05-oidc-four-tenants.spec.ts` is the OIDC demo, and it detects the adapter
+  rather than being told.** `/auth/login` is a 302 under both adapters and where it points says
+  which issuer is answering. It skips on the stub with the command that turns that around, and
+  `MERCATUS_E2E_REQUIRE_OIDC=1` makes the skip a failure — which is what an acceptance run uses.
+  The suite asks the store API its questions with the token the MERCHANT'S BROWSER was handed,
+  because `/dev/login/staff` does not exist under `oidc` and a helper that needed it could only
+  ever describe the stub.
