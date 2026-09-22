@@ -76,14 +76,25 @@ issuer. It detects the adapter from where `/auth/login` redirects;
 
 ## The state I am leaving
 
-- `pnpm turbo run typecheck lint` — 26/26.
-- `pnpm -r test` — 261, 0 skipped.
-- `pnpm test:e2e` on the stub, against two pooled and two dedicated tenants — 22/22 in 1.6 min.
-- `05-oidc-four-tenants.spec.ts` on `MERCATUS_AUTH_ADAPTER=oidc`, against the same four tenants —
-  the result is in the commit message, measured, not claimed.
-- Versions bumped to **2.0.0** in the root and all 14 workspace packages, so a registered instance
-  reports `version: "2.0.0"` to the platform console. Tagged `v2.0.0`. Not pushed; the human
-  pushes.
+All measured on this machine, at the tag, with nothing else of mine running:
+
+| | |
+|---|---|
+| `pnpm turbo run typecheck lint` | 26/26 |
+| `pnpm -r test` | **261 passed, 0 skipped**, exit 0 |
+| `pnpm test:e2e` (stub, four tenants live) | **22 passed, 6 skipped, 1.6 min** |
+| `MERCATUS_E2E_REQUIRE_OIDC=1 pnpm test:e2e` | **6 passed, 22 skipped, 50.7 s**, on Logto |
+| `GET /installations` | both instances reporting `version: "2.0.0"` |
+| host pinning | wrong host → 401 twice WITHOUT burning the token; the pinned host then → 200 |
+| `DELETE /installations/:id` | 204, and that instance's client is gone from Logto (`CK1`) |
+| cleanup | `docker ps` shows only `chess-trainer`; 28080/28311/28312/15230/15240 free |
+
+The 22 and the 6 are two runs of the same command against two configurations of the same stack,
+and both are in the README and in `docs/MORNING.md` §1. A single run cannot cover both, because
+`01`–`04` mint a fresh shopper per run — see "What I did not do".
+
+Versions bumped to **2.0.0** in the root and all 14 workspace packages. Tagged `v2.0.0`, with the
+numbers above in the tag message. **Not pushed** — the human pushes.
 - `docs/MORNING.md` §1–§3 rewritten. It was the file that opens with "Read this file" and it still
   told a reader to buy on `http://127.0.0.1:3002`, an address that has not existed since the
   dedicated store's port became Aspire-assigned.
