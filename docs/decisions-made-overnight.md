@@ -176,3 +176,59 @@ file is where they are amended.
   fastify-type-provider-zod and zod.** BUILD-PLAN §6.0 puts `createServer` in core, and the
   composition helper is only worth having if it wires the whole set. No app registers those
   plugins itself.
+
+## Task 04b — apps/fake-bank
+
+- **The two HMAC canonical forms are the values joined by `|`, in a fixed order, hex-encoded
+  HMAC-SHA256.** `apps/platform` must produce and verify exactly these:
+  `request  = reference|amountMinor|currency|callbackUrl` (platform signs, fake-bank verifies) and
+  `callback = providerRef|status|amountMinor|currency` (fake-bank signs, platform verifies).
+  `amountMinor` is written as a base-10 integer, so there is no float formatting to disagree on.
+  Deliberately the dumbest scheme that works: what is being exercised is "do both sides agree",
+  not the scheme.
+- **fake-bank's own Zod schemas live in `apps/fake-bank/src/contracts.ts`, not in
+  `@mercatus/contracts`.** fake-bank is run-mode only and never ships (§6.3, CR1), while
+  `@mercatus/contracts` is imported by everything that does. The one shape that crosses the
+  boundary — the callback body — is imported *from* `@mercatus/contracts`
+  (`paymentCallbackBodySchema`) and parsed before sending, so the contract that matters cannot
+  drift.
+- **`loadFakeBankConfig()` lives in `apps/fake-bank/src/config.ts`, not in
+  `packages/core/src/config.ts`.** Same reason: a config loader for a service that must never be
+  reachable from a published image does not belong in the package every app imports.
+  `loadPlatformConfig()` beside `loadStoreConfig()` is still the right home for the platform's,
+  and is left to whoever builds `apps/platform`.
+- **fake-bank calls `createServer()` with no `auth` block at all.** It has no tenants and no
+  tokens; the only thing it authenticates is an HMAC on a request body, which is a property of the
+  payload rather than of the caller, so it belongs in the route. `AuthContextOptions` already
+  documented this case.
+- **The 401 for a bad request signature carries the canonical string fake-bank hashed, in
+  `details`.** This is a deliberate exception to S1, which exists to stop auth-shaped endpoints
+  being probed for accounts. There are no accounts here, the service never ships, and the
+  canonical string is the one piece of information that turns "signature invalid" into a fix. It
+  contains no secret and no digest.
+- **A fifth internal status, `dropped`, beside the `created|paid|declined` the platform knows.**
+  A dropped connection is not an outcome a real provider would ever report — we would only see the
+  socket close — so it is fake-bank's own state and never appears in a callback.
+- **`no-callback` leaves the payment `paid`.** The bank took the money and we were never told; our
+  books and theirs disagree. That is the state a reconciliation job exists for, and being able to
+  produce it on demand is the point of the behaviour.
+- **The behaviour is chosen in three places with one default:** the body of
+  `POST /pay/:id/complete`, then `?behaviour=` on that call, then `POST /payments?behaviour=` at
+  creation, then `approve`. The query parameter at creation is what lets an automated
+  buy-a-store test drive a failure without opening the page.
+- **A settled payment answers 409 rather than settling again.** The platform's callback handler is
+  already idempotent by `providerRef` (CK2), so a second settlement would test nothing a replayed
+  callback does not.
+- **The callback is awaited before the completion is answered.** A real provider fires it
+  asynchronously; a fake driven from a shell script has to be deterministic, so after
+  `curl …/complete` returns, `GET /payments/:id` already knows what the callback did.
+- **`paymentUrl` is built from the request, not from a configured base URL**, so fake-bank reads
+  no `FAKE_BANK_URL`. `trustProxy` is already on in `createServer`, so this stays correct behind
+  Aspire and Traefik.
+- **The `--mc-*` design tokens are inlined in `apps/fake-bank/src/page.ts`.**
+  `packages/ui/src/tokens.css` does not exist yet and fake-bank is a server with no bundler, so it
+  has no way to ship a workspace stylesheet. The names match BUILD-PLAN §7.1 exactly; when
+  `tokens.css` lands, that `:root` block is the thing to delete.
+- **The payment page's buttons post JSON with `fetch` rather than submitting a form.** Fastify does
+  not parse `application/x-www-form-urlencoded` without `@fastify/formbody`, which is not in the
+  catalog. One dependency avoided for four lines of script.
