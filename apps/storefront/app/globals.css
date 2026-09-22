@@ -1,0 +1,365 @@
+/*
+ * The storefront's own styles. Every value is a token from @mercatus/ui -- if a number appears
+ * here that is not a `var(--mc-*)`, it is either a layout constant (a grid width, a border width)
+ * or it is a mistake.
+ *
+ * One stylesheet rather than one per component: the whole storefront is nine pages of forms,
+ * cards and a table, and a file per component would be more filing than styling. The `sf-` prefix
+ * keeps it from colliding with anything a shared package later brings.
+ */
+
+/* ------------------------------------------------------------------- shell */
+
+.sf-shell {
+  /* The tenant's three brandable properties land on THIS element (DW), so the neutral defaults
+     stay in force everywhere outside a store. */
+  background: var(--mc-bg);
+  color: var(--mc-fg);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.sf-header {
+  background: var(--mc-surface);
+  border-bottom: 1px solid var(--mc-border);
+}
+
+.sf-header-inner,
+.sf-main,
+.sf-footer-inner {
+  width: 100%;
+  max-width: 64rem;
+  margin: 0 auto;
+  padding: var(--mc-space-4);
+}
+
+.sf-header-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--mc-space-4);
+}
+
+.sf-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--mc-space-3);
+  text-decoration: none;
+  color: inherit;
+}
+
+.sf-brand-logo {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--mc-radius);
+  object-fit: cover;
+}
+
+.sf-brand-mark {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--mc-radius);
+  background: var(--mc-accent);
+  color: var(--mc-accent-fg);
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.sf-brand-name {
+  font-size: var(--mc-text-lg);
+  font-weight: 600;
+}
+
+.sf-nav {
+  display: flex;
+  align-items: center;
+  gap: var(--mc-space-4);
+}
+
+.sf-nav a {
+  color: var(--mc-fg-muted);
+  text-decoration: none;
+}
+
+.sf-nav a:hover {
+  color: var(--mc-fg);
+}
+
+.sf-main {
+  flex: 1;
+  padding-block: var(--mc-space-5);
+}
+
+.sf-footer {
+  border-top: 1px solid var(--mc-border);
+  color: var(--mc-fg-muted);
+  font-size: var(--mc-text-sm);
+}
+
+/* -------------------------------------------------------------- primitives */
+
+.sf-page-header {
+  margin-bottom: var(--mc-space-5);
+}
+
+.sf-page-header h1 {
+  font-size: var(--mc-text-xl);
+  margin: 0 0 var(--mc-space-1);
+}
+
+.sf-muted {
+  color: var(--mc-fg-muted);
+  font-size: var(--mc-text-sm);
+  margin: 0;
+}
+
+.sf-mono {
+  font-family: var(--mc-font-mono);
+  font-size: var(--mc-text-sm);
+}
+
+.sf-card {
+  background: var(--mc-surface);
+  border: 1px solid var(--mc-border);
+  border-radius: var(--mc-radius-lg);
+  padding: var(--mc-space-5);
+}
+
+.sf-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mc-space-4);
+}
+
+.sf-row {
+  display: flex;
+  align-items: center;
+  gap: var(--mc-space-3);
+  flex-wrap: wrap;
+}
+
+.sf-empty {
+  background: var(--mc-surface);
+  border: 1px dashed var(--mc-border);
+  border-radius: var(--mc-radius-lg);
+  padding: var(--mc-space-6);
+  text-align: center;
+  color: var(--mc-fg-muted);
+}
+
+.sf-banner {
+  border: 1px solid var(--mc-border);
+  border-left-width: 4px;
+  border-radius: var(--mc-radius);
+  padding: var(--mc-space-3) var(--mc-space-4);
+  background: var(--mc-surface);
+  font-size: var(--mc-text-sm);
+}
+
+.sf-banner-info {
+  border-left-color: var(--mc-accent);
+}
+
+.sf-banner-warning {
+  border-left-color: var(--mc-warning);
+}
+
+.sf-banner-danger {
+  border-left-color: var(--mc-danger);
+}
+
+.sf-banner-success {
+  border-left-color: var(--mc-success);
+}
+
+/* ------------------------------------------------------------------ button */
+
+.sf-button {
+  display: inline-block;
+  border: 1px solid var(--mc-accent);
+  border-radius: var(--mc-radius);
+  background: var(--mc-accent);
+  color: var(--mc-accent-fg);
+  padding: var(--mc-space-2) var(--mc-space-4);
+  font-size: var(--mc-text-base);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.sf-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.sf-button-quiet {
+  background: var(--mc-surface);
+  color: var(--mc-fg);
+  border-color: var(--mc-border);
+}
+
+.sf-button-small {
+  padding: var(--mc-space-1) var(--mc-space-3);
+  font-size: var(--mc-text-sm);
+}
+
+/* ------------------------------------------------------------------- forms */
+
+.sf-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mc-space-1);
+}
+
+.sf-field label {
+  font-size: var(--mc-text-sm);
+  color: var(--mc-fg-muted);
+}
+
+.sf-input {
+  border: 1px solid var(--mc-border);
+  border-radius: var(--mc-radius);
+  background: var(--mc-surface);
+  padding: var(--mc-space-2) var(--mc-space-3);
+  width: 100%;
+}
+
+.sf-hint {
+  font-size: var(--mc-text-sm);
+  color: var(--mc-fg-muted);
+}
+
+.sf-error {
+  color: var(--mc-danger);
+  font-size: var(--mc-text-sm);
+}
+
+/* ---------------------------------------------------------------- products */
+
+.sf-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+  gap: var(--mc-space-4);
+}
+
+.sf-product {
+  background: var(--mc-surface);
+  border: 1px solid var(--mc-border);
+  border-radius: var(--mc-radius-lg);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.sf-product-image,
+.sf-product-placeholder {
+  aspect-ratio: 4 / 3;
+  width: 100%;
+  object-fit: cover;
+  background: var(--mc-bg);
+  display: grid;
+  place-items: center;
+  color: var(--mc-fg-muted);
+  font-family: var(--mc-font-mono);
+  font-size: var(--mc-text-sm);
+  border-bottom: 1px solid var(--mc-border);
+}
+
+.sf-product-body {
+  padding: var(--mc-space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--mc-space-2);
+  flex: 1;
+}
+
+.sf-product-title {
+  font-weight: 600;
+  text-decoration: none;
+  color: inherit;
+}
+
+.sf-price {
+  font-size: var(--mc-text-lg);
+  font-weight: 600;
+}
+
+.sf-product-foot {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--mc-space-2);
+}
+
+.sf-detail {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--mc-space-5);
+}
+
+@media (min-width: 40rem) {
+  .sf-detail {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
+
+/* ------------------------------------------------------------------ tables */
+
+.sf-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--mc-surface);
+  border: 1px solid var(--mc-border);
+  border-radius: var(--mc-radius-lg);
+  overflow: hidden;
+}
+
+.sf-table th,
+.sf-table td {
+  text-align: left;
+  padding: var(--mc-space-3) var(--mc-space-4);
+  border-bottom: 1px solid var(--mc-border);
+}
+
+.sf-table th {
+  font-size: var(--mc-text-sm);
+  color: var(--mc-fg-muted);
+  font-weight: 600;
+}
+
+.sf-table tr:last-child td {
+  border-bottom: none;
+}
+
+.sf-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------------------------ status */
+
+.sf-status {
+  display: inline-block;
+  border-radius: var(--mc-radius);
+  padding: 2px var(--mc-space-2);
+  font-size: var(--mc-text-sm);
+  border: 1px solid var(--mc-border);
+}
+
+.sf-status-paid {
+  color: var(--mc-success);
+  border-color: var(--mc-success);
+}
+
+.sf-status-declined {
+  color: var(--mc-danger);
+  border-color: var(--mc-danger);
+}
+
+.sf-status-pending {
+  color: var(--mc-warning);
+  border-color: var(--mc-warning);
+}

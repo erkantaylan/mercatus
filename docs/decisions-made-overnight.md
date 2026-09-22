@@ -457,3 +457,41 @@ file is where they are amended.
   ports; the isolated stack is in `lessons/07b-dashboard-spa.md`. Wiring the dashboard into
   `aspire/AppHostA/apphost.cs` is left to whoever owns that file — `vite.config.ts` reads `PORT`
   so the dedicated copy needs no second config.
+
+## Task 07a — apps/storefront
+
+- **`packages/ui` is `tokens.css` + `reset.css` and nothing else.** The same conclusion tasks 07b
+  and 07c reached independently: a package that exports React components has to agree with a
+  Next.js SSR app and two Vite SPAs on a React version and a bundler, and a stylesheet agrees with
+  everything. The storefront's components live in `apps/storefront/components/`.
+- **The storefront imports `@mercatus/contracts` for TYPES only; it does not parse responses with
+  its Zod schemas.** Neither Turbopack nor webpack maps the workspace's `.js` relative imports
+  back to `.ts`, so a runtime import of the package resolves to a module with no exports at all.
+  A type-only import is erased before any bundler sees it and still fails `turbo run typecheck`
+  when the contract moves, which is the half of the guarantee worth having. Details in
+  `lessons/07a-storefront.md`.
+- **The storefront signs fake-bank requests itself, with `FAKE_BANK_HMAC_SECRET`.** This is a
+  `CE2` violation on a dedicated instance, where the process runs on the merchant's own server.
+  The correct path is the store API calling the control plane's `POST /payments/proxy`, which
+  already exists — but that needs a route on `apps/store`, which task 07a was told not to touch.
+  Whoever wires tier 3 should move it.
+- **The shopper's payment is settled against the order, and the order's own `status` stays
+  `placed`.** There is no `orders.status = 'paid'` transition on the store API and 07a may not add
+  one. The confirmation page reports the bank's outcome beside the order's status rather than
+  conflating them.
+- **fake-bank settlement is remembered in a per-process `Map`, not a database.** The storefront
+  owns no schema. The verified callback is the normal source of truth; when the ledger has nothing
+  the confirmation page asks fake-bank directly, and the answer says which of the two it was.
+- **Browser Back is the return path from fake-bank.** Its hosted page has no "return to merchant"
+  link and it is run-mode only, so adding one is not worth a change to a service 07a may not
+  touch. The checkout page writes the order id to `localStorage` before leaving and redirects to
+  the confirmation on `pageshow`.
+- **Three environment variables added to the §8.2 contract**, all storefront-only and all
+  server-side: `STOREFRONT_PUBLIC_URL` (absolute, because fake-bank posts its callback to it),
+  `STOREFRONT_TENANT_SLUGS` (pooled index page only — there is no "list every tenant" endpoint on
+  the store API and a shopper should not have one), and `STORE_API_URL`, which §8.2 already names.
+  Nothing is `NEXT_PUBLIC_`: the browser talks only to this app's own route handlers.
+- **`next.config.ts` sets `allowedDevOrigins: ['127.0.0.1']`.** Without it `next dev` renders
+  correctly and never hydrates, with the explanation printed only in the dev server's log.
+- **`apps/storefront` is not in `aspire/AppHostA/apphost.cs`.** Same reason as the dashboard:
+  three front ends were being built at once and the AppHost is one file.
