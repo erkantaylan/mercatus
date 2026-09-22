@@ -10,6 +10,9 @@ export default tseslint.config(
       '**/dist/**',
       '**/.turbo/**',
       '**/.next/**',
+      // A second `next dev` instance gets its own distDir (NEXT_DIST_DIR), so the generated
+      // output is `.next-pooled` / `.next-zenith` as well as `.next`.
+      '**/.next-*/**',
       '**/coverage/**',
       '**/migrations/**',
     ],

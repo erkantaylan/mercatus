@@ -20,6 +20,8 @@ import type { Product } from '@mercatus/contracts';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 
+import Link from 'next/link';
+
 import type { BasketLine } from '@/lib/basket';
 import { pendingOrderKey, readBasket } from '@/lib/basket';
 import { formatMoney } from '@/lib/money';
@@ -30,7 +32,21 @@ interface CheckoutResponse {
   error?: { code?: unknown; message?: unknown };
 }
 
-export function CheckoutForm({ slug, products }: { slug: string; products: readonly Product[] }) {
+export interface CheckoutSession {
+  readonly phone: string;
+  readonly name: string | null;
+}
+
+export function CheckoutForm({
+  slug,
+  products,
+  session,
+}: {
+  slug: string;
+  products: readonly Product[];
+  /** Null means a guest: they are asked who they are, and the checkout signs them in. */
+  session: CheckoutSession | null;
+}) {
   const router = useRouter();
   const [lines, setLines] = useState<BasketLine[] | null>(null);
   const [phone, setPhone] = useState('+905550000001');
@@ -88,8 +104,9 @@ export function CheckoutForm({ slug, products }: { slug: string; products: reado
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           slug,
-          phone,
-          name,
+          // A signed-in shopper posts no identity at all: the httpOnly cookie is the identity,
+          // and the route handler reads it (Q20, BI2).
+          ...(session ? {} : { phone, name }),
           lines: rows.map((row) => ({ productId: row.product.id, qty: row.line.qty })),
         }),
       });
@@ -171,33 +188,43 @@ export function CheckoutForm({ slug, products }: { slug: string; products: reado
       </table>
 
       <div className="sf-card sf-stack">
-        <div className="sf-field">
-          <label htmlFor="phone">Phone</label>
-          <input
-            id="phone"
-            className="sf-input"
-            value={phone}
-            required
-            onChange={(event) => {
-              setPhone(event.target.value);
-            }}
-          />
-          <span className="sf-hint">
-            E.164, e.g. +905550000001. It identifies you at this store and nowhere else.
-          </span>
-        </div>
+        {session ? (
+          <p className="sf-muted" data-shopper={session.phone}>
+            Buying as <strong>{session.phone}</strong>
+            {session.name ? ` (${session.name})` : null}.{' '}
+            <Link href={`/signin?next=/t/${slug}/checkout`}>Not you?</Link>
+          </p>
+        ) : (
+          <>
+            <div className="sf-field">
+              <label htmlFor="phone">Phone</label>
+              <input
+                id="phone"
+                className="sf-input"
+                value={phone}
+                required
+                onChange={(event) => {
+                  setPhone(event.target.value);
+                }}
+              />
+              <span className="sf-hint">
+                E.164, e.g. +905550000001. One account, every shop on this platform.
+              </span>
+            </div>
 
-        <div className="sf-field">
-          <label htmlFor="name">Name</label>
-          <input
-            id="name"
-            className="sf-input"
-            value={name}
-            onChange={(event) => {
-              setName(event.target.value);
-            }}
-          />
-        </div>
+            <div className="sf-field">
+              <label htmlFor="name">Name</label>
+              <input
+                id="name"
+                className="sf-input"
+                value={name}
+                onChange={(event) => {
+                  setName(event.target.value);
+                }}
+              />
+            </div>
+          </>
+        )}
 
         {error ? <p className="sf-error">{error}</p> : null}
 

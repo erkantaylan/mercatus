@@ -16,6 +16,7 @@ import type { CSSProperties, ReactNode } from 'react';
 import { BasketLink } from '@/components/BasketLink';
 import { getBranding, StoreApiError } from '@/lib/api';
 import { checkoutNotice } from '@/lib/licence';
+import { readShopperSession } from '@/lib/session';
 
 export const dynamic = 'force-dynamic';
 
@@ -35,6 +36,11 @@ export default async function StoreLayout({
     if (error instanceof StoreApiError && error.status === 404) notFound();
     throw error;
   });
+
+  // One session, every store (Q20). The header says which account is buying, on every page of
+  // every shop, because "the same account bought from both" is a claim a shopper should be able
+  // to check without reading a cookie.
+  const session = await readShopperSession();
 
   // CG3 arriving in the shell, so it is on every page of the shop rather than only on the one
   // where the refusal happens. A shopper who fills a basket and is told at the last step is a
@@ -66,6 +72,15 @@ export default async function StoreLayout({
             <Link href={`/t/${slug}`}>Catalog</Link>
             <Link href={`/t/${slug}/orders`}>Orders</Link>
             <BasketLink slug={slug} />
+            {session ? (
+              <Link href={`/signin?next=/t/${slug}`} data-shopper={session.phone}>
+                {session.phone}
+              </Link>
+            ) : (
+              <Link href={`/signin?next=/t/${slug}`} data-shopper="">
+                Sign in
+              </Link>
+            )}
           </nav>
         </div>
       </header>

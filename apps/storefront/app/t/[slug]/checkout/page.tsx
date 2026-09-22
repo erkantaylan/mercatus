@@ -11,12 +11,17 @@ import Link from 'next/link';
 import { CheckoutForm } from '@/components/CheckoutForm';
 import { getBranding, listProducts } from '@/lib/api';
 import { checkoutNotice } from '@/lib/licence';
+import { readShopperSession } from '@/lib/session';
 
 export const dynamic = 'force-dynamic';
 
 export default async function CheckoutPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
-  const [{ items }, branding] = await Promise.all([listProducts(slug), getBranding(slug)]);
+  const [{ items }, branding, session] = await Promise.all([
+    listProducts(slug),
+    getBranding(slug),
+    readShopperSession(),
+  ]);
 
   // The store API refuses the order anyway (402 or 503) -- this is the same decision, taken from
   // the same licence, one screen earlier. The gate is the API's; this is only manners.
@@ -42,7 +47,7 @@ export default async function CheckoutPage({ params }: { params: Promise<{ slug:
           then the browser goes to fake-bank to settle it.
         </p>
       </div>
-      <CheckoutForm slug={slug} products={items} />
+      <CheckoutForm slug={slug} products={items} session={session} />
     </>
   );
 }

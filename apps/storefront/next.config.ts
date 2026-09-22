@@ -9,6 +9,11 @@ import type { NextConfig } from 'next';
  * resolve under either of Next's bundlers.
  */
 const nextConfig: NextConfig = {
+  // The pooled storefront and a dedicated one are the SAME package (CC1), so two `next dev`
+  // processes would otherwise share `apps/storefront/.next` and trip over each other's build
+  // output. One variable per instance keeps them apart; unset is the plain default.
+  distDir: process.env['NEXT_DIST_DIR'] ?? '.next',
+
   // Next 16 writes an AGENTS.md and a CLAUDE.md into the app directory on first start. This repo
   // keeps its guidance in docs/ and lessons/, so the generator is off.
   agentRules: false,

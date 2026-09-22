@@ -13,6 +13,7 @@
     "typecheck": "turbo run typecheck",
     "lint": "turbo run lint",
     "test": "turbo run test",
+    "test:e2e": "pnpm --filter @mercatus/e2e test:e2e",
     "check": "turbo run typecheck lint test",
     "dev-seed": "pnpm --filter @mercatus/db-platform seed && pnpm --filter @mercatus/db-platform seed:dedicated && pnpm --filter @mercatus/db-store seed"
   },

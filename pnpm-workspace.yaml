@@ -12,6 +12,10 @@ allowBuilds:
   ssh2: false
   esbuild: true
   protobufjs: true
+  # Playwright's postinstall downloads its own browser bundles. The e2e suite drives the REAL
+  # Chrome already installed on this machine (channel: 'chrome'), so the download is refused
+  # rather than left unanswered -- ~450 MB nobody opens.
+  playwright: false
 
 catalog:
   # runtime
@@ -50,6 +54,7 @@ catalog:
   turbo: 2.11.2
   drizzle-kit: 0.31.11
   vitest: 5.0.1
+  "@playwright/test": 1.63.0
   # The leak suite (BL1) brings up its own Postgres so it can never silently skip.
   testcontainers: 12.1.0
   "@testcontainers/postgresql": 12.1.0

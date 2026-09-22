@@ -203,6 +203,9 @@ Node("storefront-zenith", "storefront", StorefrontPort,
     // The CE2 compromise, in the open: their box signs payment requests with our bank's key.
     .WithEnvironment("FAKE_BANK_URL", FakeBankUrl)
     .WithEnvironment("FAKE_BANK_HMAC_SECRET", FakeBankHmacSecret)
+    // AppHost A runs the same package out of the same directory. Without a distDir of its own,
+    // whichever `next dev` starts second writes over the first one's build output.
+    .WithEnvironment("NEXT_DIST_DIR", ".next-zenith")
     .WithReference(fakeBank)
     .WithHttpHealthCheck($"/t/{TenantSlug}")
     .WaitFor(store);
@@ -211,7 +214,7 @@ Node("storefront-zenith", "storefront", StorefrontPort,
 // one with a different VITE_STORE_API_URL, and it is why "the control plane is down" does not
 // mean "the merchant cannot see their orders".
 Node("dashboard-zenith", "dashboard", DashboardPort,
-        "node_modules/vite/bin/vite.js")
+        "node_modules/vite/bin/vite.js", "--host", "127.0.0.1")
     .WithEnvironment("VITE_STORE_API_URL", storeBase)
     .WithHttpHealthCheck("/")
     .WaitFor(store);

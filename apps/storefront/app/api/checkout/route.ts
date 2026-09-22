@@ -20,14 +20,22 @@ import { z } from 'zod';
 
 import { checkout, StoreApiError } from '@/lib/api';
 import { createPayment, recordUnreachable } from '@/lib/payments';
-import { mintShopperToken, shopperCookie } from '@/lib/session';
+import {
+  mintShopperToken,
+  readShopperSession,
+  readShopperToken,
+  sessionCookies,
+} from '@/lib/session';
 
 const bodySchema = z.object({
   slug: z
     .string()
     .regex(/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/)
     .max(63),
-  phone: z.string().regex(/^\+[1-9]\d{6,14}$/, 'A phone number in E.164 form.'),
+  // Optional, because a shopper who signed in already HAS an identity: the session's token is the
+  // subject and the session's phone is the contact detail. A phone here is a sign-in and a
+  // checkout in one request, which is what a guest does.
+  phone: z.string().regex(/^\+[1-9]\d{6,14}$/, 'A phone number in E.164 form.').optional(),
   name: z.string().max(120).optional(),
   lines: z.array(z.object({ productId: z.uuid(), qty: z.number().int().positive() })).min(1),
 });
@@ -40,19 +48,36 @@ export async function POST(request: Request): Promise<Response> {
       { status: 400 },
     );
   }
-  const { slug, phone, name, lines } = parsed.data;
+  const { slug, lines } = parsed.data;
 
-  // The phone is the identity at this store today, so the token is minted per checkout rather
-  // than reused: a different phone is a different shopper. The Identity phase replaces this with
-  // a real sign-in and the cookie stops being written here.
-  let token: string;
-  try {
-    token = await mintShopperToken(phone);
-  } catch {
+  // The session comes first: a shopper who signed in buys as themselves, at every store this
+  // process serves, without being asked who they are again (Q20). A posted phone signs a guest in
+  // on the spot, which is the same two calls in one request.
+  const existing = await readShopperSession();
+  const existingToken = await readShopperToken();
+  const phone = parsed.data.phone ?? existing?.phone;
+  const name = parsed.data.name ?? existing?.name ?? undefined;
+
+  if (phone === undefined) {
     return Response.json(
-      { error: { code: 'UNAUTHENTICATED', message: 'Could not start a shopper session.' } },
-      { status: 502 },
+      { error: { code: 'UNAUTHENTICATED', message: 'Sign in before checking out.' } },
+      { status: 401 },
     );
+  }
+
+  const reuse = existingToken !== undefined && parsed.data.phone === undefined;
+  let token: string;
+  if (reuse && existingToken !== undefined) {
+    token = existingToken;
+  } else {
+    try {
+      token = await mintShopperToken(phone);
+    } catch {
+      return Response.json(
+        { error: { code: 'UNAUTHENTICATED', message: 'Could not start a shopper session.' } },
+        { status: 502 },
+      );
+    }
   }
 
   let placed: CheckoutResult;
@@ -108,7 +133,9 @@ export async function POST(request: Request): Promise<Response> {
       amountMinor: placed.totalMinor,
       currency: placed.currency,
     });
-    response.headers.append('set-cookie', serialiseCookie(token));
+    for (const cookie of sessionCookies(token, { phone, name: name ?? null })) {
+      response.headers.append('set-cookie', cookie);
+    }
     return response;
   }
 
@@ -119,18 +146,8 @@ export async function POST(request: Request): Promise<Response> {
     currency: placed.currency,
     paymentUrl,
   });
-  response.headers.append('set-cookie', serialiseCookie(token));
+  for (const cookie of sessionCookies(token, { phone, name: name ?? null })) {
+    response.headers.append('set-cookie', cookie);
+  }
   return response;
-}
-
-/** `cookies()` is not writable from a Route Handler's return value, so the header is built here. */
-function serialiseCookie(token: string): string {
-  const cookie = shopperCookie(token);
-  return [
-    `${cookie.name}=${encodeURIComponent(cookie.value)}`,
-    `Path=${cookie.path}`,
-    `Max-Age=${String(cookie.maxAge)}`,
-    'HttpOnly',
-    'SameSite=Lax',
-  ].join('; ');
 }

@@ -1,0 +1,186 @@
+/**
+ * The demo, part three, and the one the whole architecture is for: a store on someone else's
+ * server keeps selling while our control plane is down.
+ *
+ * `zenith` is AppHost B -- its own Postgres, its own process, the same image with
+ * `DEPLOYMENT_MODE=dedicated` (CC1). It reaches us over three HTTP URLs and we reach it over none
+ * (CE4). It holds a per-instance credential it minted for itself at registration (CE1).
+ *
+ * The outage is made by killing the Aspire-managed `platform` PROCESS, not by `aspire stop` on
+ * AppHost A. Stopping A destroys A's Postgres with it, so the rebuilt control plane has never
+ * heard of this installation, the instance token answers 401 and the store stays read_only for
+ * ever (lessons/10). Killing the process is the outage that can RECOVER, which is the half of the
+ * story worth testing: degrade, keep selling, come back.
+ *
+ * Skipped, not failed, when AppHost B is not running. B is optional in the everyday loop.
+ */
+import type { BrowserContext, Page } from '@playwright/test';
+import { expect, test } from '@playwright/test';
+
+import { addToBasket, checkout, shot, signedInAs, signIn } from './helpers/shop.js';
+import type { CapturedProcess } from './helpers/stack.js';
+import {
+  ENDPOINTS,
+  PLATFORM_PORT,
+  TENANTS,
+  captureProcess,
+  licenceView,
+  pidOnPort,
+  probe,
+  reachable,
+  relaunch,
+  staffOrderCount,
+  stopProcess,
+} from './helpers/stack.js';
+
+/** The same account as the pooled story. Same person, same phone, a different store's session. */
+const SHOPPER = { phone: '+905550000777', name: 'E2E Shopper' };
+const SLUG = TENANTS.zenith.slug;
+
+let context: BrowserContext;
+let page: Page;
+let dedicatedUp = false;
+let captured: CapturedProcess | null = null;
+
+test.describe.configure({ mode: 'serial' });
+
+test.describe('the dedicated instance keeps selling with the control plane down', () => {
+  test.beforeAll(async ({ browser }) => {
+    dedicatedUp =
+      (await reachable(ENDPOINTS.storeDedicated)) &&
+      (await reachable(ENDPOINTS.storefrontDedicated, `/t/${SLUG}`));
+    if (dedicatedUp) {
+      // Same reason as the pooled spec: order 1 and order 2 are the assertions, so a re-used
+      // AppHost B is a clear message rather than an arithmetic surprise.
+      expect(
+        await staffOrderCount(ENDPOINTS.storeDedicated, SLUG),
+        'this spec needs a freshly started AppHost B',
+      ).toBe(0);
+    }
+    context = await browser.newContext();
+    page = await context.newPage();
+  });
+
+  test.afterAll(async () => {
+    // Bring the control plane back whatever happened, so the machine is left the way it was found.
+    if (captured !== null && !(await reachable(ENDPOINTS.platform))) {
+      relaunch(captured);
+      await expect.poll(() => reachable(ENDPOINTS.platform), { timeout: 60_000 }).toBe(true);
+    }
+    await context.close();
+  });
+
+  test('the same shopper signs in at the dedicated store', async () => {
+    test.skip(!dedicatedUp, 'AppHost B is not running');
+
+    // A different origin on a different server, so the session is that store's to issue -- which
+    // is exactly what lets it verify the shopper offline for the rest of the outage (Q20).
+    await signIn(page, ENDPOINTS.storefrontDedicated, SHOPPER);
+    await page.goto(`${ENDPOINTS.storefrontDedicated}/t/${SLUG}`);
+    expect(await signedInAs(page)).toBe(SHOPPER.phone);
+
+    const view = await licenceView(ENDPOINTS.storeDedicated, SLUG);
+    expect(view.status).toBe('active');
+    expect(view.state).toBe('healthy');
+    await shot(page, '16-zenith-catalog');
+  });
+
+  test('buys from the dedicated store, control plane up', async () => {
+    test.skip(!dedicatedUp, 'AppHost B is not running');
+
+    const title = await firstProductTitle(ENDPOINTS.storeDedicated, SLUG);
+    await addToBasket(page, ENDPOINTS.storefrontDedicated, SLUG, title);
+    const purchase = await checkout(page, ENDPOINTS.storefrontDedicated, SLUG);
+
+    expect(purchase.payment).toBe('paid');
+    // Zenith's own counter. Its first order is 1, on its own database (BG2, CC2).
+    expect(purchase.number).toBe(1);
+    await shot(page, '17-zenith-order-paid');
+  });
+
+  test('the control plane is stopped', async () => {
+    test.skip(!dedicatedUp, 'AppHost B is not running');
+
+    const pid = pidOnPort(PLATFORM_PORT);
+    expect(pid, 'no process is listening on the platform port').not.toBeNull();
+    // Everything needed to bring it back, taken BEFORE it dies: argv, cwd and the whole
+    // environment -- including the Postgres host port, which Aspire assigned at random.
+    captured = captureProcess(pid as number);
+    stopProcess(pid as number);
+
+    await expect.poll(() => reachable(ENDPOINTS.platform), { timeout: 30_000 }).toBe(false);
+
+    // The dedicated box notices by POLLING; nothing reaches into it to tell it (CE4).
+    await expect
+      .poll(async () => (await licenceView(ENDPOINTS.storeDedicated, SLUG)).state, {
+        timeout: 60_000,
+      })
+      .toBe('grace');
+
+    const view = await licenceView(ENDPOINTS.storeDedicated, SLUG);
+    // Unreachable is OURS and never becomes the merchant's status (CG3).
+    expect(view.status).toBe('active');
+  });
+
+  test('the dedicated store still completes a checkout', async () => {
+    test.skip(!dedicatedUp, 'AppHost B is not running');
+    expect(await reachable(ENDPOINTS.platform)).toBe(false);
+
+    const title = await firstProductTitle(ENDPOINTS.storeDedicated, SLUG);
+    await addToBasket(page, ENDPOINTS.storefrontDedicated, SLUG, title);
+    const purchase = await checkout(page, ENDPOINTS.storefrontDedicated, SLUG);
+
+    // Placed, numbered and priced by their own database, with our control plane dark. `paid` when
+    // the bank is still reachable, `unreachable` when it is not -- both are a completed checkout
+    // as far as this store is concerned, and neither is an error a shopper can act on (CG1).
+    expect(['paid', 'unreachable']).toContain(purchase.payment);
+    expect(purchase.number).toBe(2);
+    await shot(page, '18-zenith-order-during-outage');
+
+    // And the rest of the shop is untouched: browsing, the shopper's own orders, and the
+    // merchant's dashboard on their own server.
+    expect((await probe(ENDPOINTS.storefrontDedicated, `/t/${SLUG}`)).status).toBe(200);
+    expect((await probe(ENDPOINTS.storeDedicated, '/health')).status).toBe(200);
+    expect((await probe(ENDPOINTS.dashboardDedicated, '/')).status).toBe(200);
+
+    await page.goto(`${ENDPOINTS.storefrontDedicated}/t/${SLUG}/orders`);
+    await expect(page.locator('.sf-page-header')).toContainText('2 orders at this store');
+    await shot(page, '19-zenith-orders-during-outage');
+  });
+
+  test('and catches up when the control plane comes back', async () => {
+    test.skip(!dedicatedUp, 'AppHost B is not running');
+    expect(captured, 'the control plane was never captured').not.toBeNull();
+
+    const pid = relaunch(captured as CapturedProcess);
+    // Say it out loud: this one is ours, not Aspire's, so `aspire stop` will leave it holding
+    // port 4001. The pid is also in test-results/relaunched-platform.pid.
+    process.stdout.write(
+      `\n  control plane relaunched by hand as pid ${String(pid)} -- kill it before/after ` +
+        '`aspire stop`, it is not Aspire-managed\n',
+    );
+    await expect.poll(() => reachable(ENDPOINTS.platform), { timeout: 60_000 }).toBe(true);
+
+    // One poll later, on its own, with nothing restarted on their side.
+    await expect
+      .poll(async () => (await licenceView(ENDPOINTS.storeDedicated, SLUG)).state, {
+        timeout: 60_000,
+      })
+      .toBe('healthy');
+
+    await page.goto(`${ENDPOINTS.storefrontDedicated}/t/${SLUG}`);
+    await expect(page.locator('.sf-banner')).toHaveCount(0);
+    await shot(page, '20-zenith-recovered');
+  });
+});
+
+/** The dedicated catalogue is seeded by the install command, so its titles are not in the seed. */
+async function firstProductTitle(storeApi: string, slug: string): Promise<string> {
+  const response = await fetch(`${storeApi}/t/${slug}/products`, {
+    signal: AbortSignal.timeout(10_000),
+  });
+  const { items } = (await response.json()) as { items: { title: string; stock: number }[] };
+  const sellable = items.find((item) => item.stock > 0);
+  if (!sellable) throw new Error(`${slug} has nothing in stock`);
+  return sellable.title;
+}

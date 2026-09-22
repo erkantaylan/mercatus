@@ -617,3 +617,52 @@ file is where they are amended.
   `DEV_SEED_CATALOG=1`, rather than in `packages/db-store/src/seed.ts`. The pooled seed is about
   two tenants that must exist for the leak suite; this one is about a shop having something to
   sell in a demo, and it must never run in a published topology.
+
+## Task 11 — the Playwright suite, and the shopper sign-in it needed
+
+- **A shopper now SIGNS IN, at `/signin`, rather than being identified by the phone field on a
+  checkout form.** The acceptance criteria is "a shopper signs in once, buys from A, buys from B
+  with the same account", and until this task the storefront minted a fresh token per checkout
+  from a posted phone — two guest checkouts, not one account. `POST /api/checkout` now prefers the
+  session cookie and only mints when a phone is posted, so a signed-in shopper sends no identity
+  at all and the store API sees the same subject at both shops (Q20, BI2).
+- **The sign-in page is NOT under `/t/[slug]`.** The session is tenant-less; putting the page
+  inside a store's shell would suggest a shopper has an account "at acme" when what they have is
+  an account. `?next=` is restricted to same-site paths.
+- **Two readable cookies beside the httpOnly one** (`mercatus_shopper_phone`,
+  `mercatus_shopper_name`). They are not credentials — the bearer token is — they are what the
+  header shows and what rides on the order as contact detail, and they let a server component name
+  the shopper without a key to verify a JWT with. One §8.2-shaped addition to the storefront's
+  surface, no new environment variable.
+- **AppHost A runs the pooled `storefront`, `dashboard` and `admin`** (3001, 5173, 5174). Tasks
+  07a–07c deliberately left them out of the application model; a browser gate against a stack
+  somebody assembles by hand is a gate that does not get run. Same `Web(...)` helper shape as
+  AppHost B's `Node(...)`.
+- **`NEXT_DIST_DIR`, a new environment variable for the storefront** (§8.2): `.next-pooled` on A,
+  `.next-zenith` on B, default `.next`. The pooled and dedicated storefronts are the same package
+  in the same directory (CC1), so without it two `next dev` processes share one build output.
+- **`apps/storefront/next-env.d.ts` is gitignored and removed from the index.** Next rewrites it
+  on every start to name the current distDir, so with two instances it flipped between the two and
+  left a diff after every run. `tsc --noEmit` passes without it, and typecheck then no longer
+  depends on a generated directory existing.
+- **`pnpm test:e2e` is not a turbo task.** It needs a live topology and is never cacheable; turbo
+  would replay a green run against a stack that is no longer up. The root script calls the package
+  directly, and `packages/e2e` declares no `test` script so `pnpm check` cannot pick it up.
+- **The suite starts nothing.** `aspire run --detach` owns the topology; a Playwright `webServer`
+  block would be a second, competing way to bring one up. `globalSetup` refuses to run against a
+  stack that is down and prints the command that is missing. AppHost B is optional — its spec
+  skips rather than fails.
+- **The outage is made by `SIGTERM` on the Aspire-managed platform PROCESS, never by `aspire stop`
+  on AppHost A.** Stopping A destroys its Postgres, so the rebuilt control plane has never heard of
+  the installation and the instance token answers 401 for ever (lessons/10). The suite captures
+  argv, cwd and environ from `/proc` before the kill and relaunches from them, which is what makes
+  "and it catches up when we come back" testable. The relaunched process is not Aspire-managed; its
+  pid is printed and written to `test-results/relaunched-platform.pid`.
+- **The licence flip is an API call, not a click.** Clicking the console's button would test the
+  console; the assertion is about what the data plane does two seconds later. The console is
+  screenshotted showing `passive` instead.
+- **The suite asserts order numbers, so it requires a freshly started stack**, and says so in
+  `beforeAll` rather than failing with `expected 2 to be 1`. "acme's first order is 1 and borg's
+  first order is also 1" is the visible half of BG2 and is worth more than a re-runnable suite.
+- **Screenshots and the HTML report go to the repo root and are gitignored.** `test-results/` is
+  evidence on disk for the morning, not repository content.

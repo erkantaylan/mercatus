@@ -47,6 +47,9 @@ const string PlatformInternalToken = "mercatus-dev-internal-token-0123456789";
 const int PlatformPort = 4001;
 const int StorePooledPort = 4002;
 const int FakeBankPort = 4004;
+const int StorefrontPort = 3001;
+const int DashboardPort = 5173;
+const int AdminPort = 5174;
 const int TraefikPort = 8080;
 // Logto's own defaults are 3001 and 3002, which are the two storefronts here (BUILD-PLAN 8.1).
 // The container keeps its internal ports; only the host side moves.
@@ -69,6 +72,7 @@ var logtoIssuer = $"{logtoBase}/oidc";
 // onto Logto, and nothing else about the topology changes (CC1).
 var authAdapter = Environment.GetEnvironmentVariable("MERCATUS_AUTH_ADAPTER") is "oidc" ? "oidc" : "stub";
 var fakeBankBase = $"http://127.0.0.1:{FakeBankPort}";
+var storefrontBase = $"http://127.0.0.1:{StorefrontPort}";
 var traefikEntrypoint = $"--entrypoints.web.address=:{TraefikPort}";
 
 // The generated Postgres superuser password is random and may contain characters that are not
@@ -304,5 +308,48 @@ builder.AddContainer("traefik", "traefik", "v3.5")
     .WaitFor(storePooled)
     .WaitFor(platform)
     .WaitFor(fakeBank);
+
+// ---------------------------------------------------------------------------------------------
+// The pooled front ends (BUILD-PLAN 7.2-7.4). Tasks 07a-07c built them and left them out of the
+// application model; task 11 needs all three under one `aspire run`, because a browser gate
+// against a stack somebody has to assemble by hand is a gate that does not get run.
+//
+// Each is the SAME package a dedicated instance runs (CC1) -- the storefront and the dashboard
+// differ from AppHost B's copies by their environment and nothing else. Both binaries live under
+// the APP's own node_modules; pnpm does not hoist, so there is nothing at the repo root.
+// ---------------------------------------------------------------------------------------------
+IResourceBuilder<ExecutableResource> Web(string name, string appDirectory, int port, params string[] args) =>
+    builder.AddExecutable(name, "node", $"{repoRoot}/apps/{appDirectory}", args)
+        .WithHttpEndpoint(port: port, targetPort: port, name: "http", env: "PORT", isProxied: false)
+        .WithEnvironment("NODE_ENV", "development")
+        .WithOtlpExporter();
+
+Web("storefront", "storefront", StorefrontPort, "node_modules/next/dist/bin/next", "dev")
+    // No TENANT_SLUG: this process is POOLED, so `/` lists the stores and `/t/:slug` is one of
+    // them. That one absent variable is the whole of the mode difference in this app.
+    .WithEnvironment("STOREFRONT_TENANT_SLUGS", "acme,borg")
+    .WithEnvironment("STORE_API_URL", storePooledBase)
+    .WithEnvironment("STOREFRONT_PUBLIC_URL", storefrontBase)
+    .WithEnvironment("FAKE_BANK_URL", fakeBankBase)
+    .WithEnvironment("FAKE_BANK_HMAC_SECRET", FakeBankHmacSecret)
+    // AppHost B runs the same package out of the same directory. Without a distDir of its own,
+    // whichever `next dev` starts second writes over the first one's build output.
+    .WithEnvironment("NEXT_DIST_DIR", ".next-pooled")
+    // A Next health check must name a path that answers 200 -- and this one is 200 only once the
+    // store is up and seeded, which is exactly what a WaitFor on this resource should mean.
+    .WithHttpHealthCheck("/t/acme")
+    .WaitFor(storePooled);
+
+Web("dashboard", "dashboard", DashboardPort,
+        "node_modules/vite/bin/vite.js", "--host", "127.0.0.1")
+    .WithEnvironment("VITE_STORE_API_URL", storePooledBase)
+    .WithHttpHealthCheck("/")
+    .WaitFor(storePooled);
+
+Web("admin", "admin", AdminPort,
+        "node_modules/vite/bin/vite.js", "--host", "127.0.0.1")
+    .WithEnvironment("VITE_PLATFORM_URL", platformBase)
+    .WithHttpHealthCheck("/")
+    .WaitFor(platform);
 
 builder.Build().Run();
