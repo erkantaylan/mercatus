@@ -423,3 +423,37 @@ file is where they are amended.
 - **The console is never branded.** DW's per-tenant branding is a wrapper element in the
   storefront; an operator comparing three tenants should not have the page change colour under
   them. `@mercatus/ui/tokens.css` is consumed as-is.
+
+## Task 07b — apps/dashboard
+
+- **`@fastify/cors` is registered with an explicit method list in `packages/core`.** Version 11
+  defaults to `GET,HEAD,POST`, which refuses every browser PATCH and DELETE at the preflight. This
+  is a fix rather than a decision, but it changes a shared file, so it is recorded here: any
+  service built on `createServer` now allows PATCH, PUT and DELETE from a browser.
+- **The dashboard aliases `@mercatus/core` to a two-line browser shim.** `@mercatus/contracts` is
+  the single definition of every wire shape and it imports three constants from `core`, whose
+  entry point also re-exports the Fastify server helper. The alias re-exports those constants from
+  `core`'s own source files instead of splitting the contracts package, which would have meant
+  editing a package three agents were reading at once.
+- **The dashboard's component set lives in `apps/dashboard/src/ui/`, not in `packages/ui`.** That
+  matches what task 07c settled independently: `@mercatus/ui` ships stylesheets only, because a
+  package exporting React components has to agree with a Next.js app and two Vite SPAs on a React
+  version. A component moves into the package when a second app needs the same one.
+- **The whole stub session is persisted in `localStorage`, not just a refresh token.** BUILD-PLAN
+  §7.3 says access token in memory and refresh token in storage; the stub adapter issues no
+  refresh token, so that split would sign the merchant out on every reload. `src/auth/session.ts`
+  is one of the two files the Identity phase replaces.
+- **TanStack Query is used for cache and mutations.** It is already pinned in the workspace
+  catalog, and "add a product, land on the list with the row already there" is one
+  `invalidateQueries` rather than a hand-rolled refetch.
+- **The settings screen is read-only.** `PATCH /api/settings` does not exist and should not:
+  `tenants` carries no RLS policy, so the app role holds SELECT on it and nothing else. Name and
+  branding are control-plane facts mirrored down (BV1) and are edited in the platform console.
+- **`apps/dashboard` declares no `test` script**, for the same reason `apps/admin` does not: its
+  gate is a browser driving the real store API, and an app with the script and no test files fails
+  `pnpm -r test`.
+- **The gate ran against a private Postgres on :55432 and `apps/store` started by hand, not
+  `aspire run`.** Three front ends were being built concurrently and the AppHost binds fixed
+  ports; the isolated stack is in `lessons/07b-dashboard-spa.md`. Wiring the dashboard into
+  `aspire/AppHostA/apphost.cs` is left to whoever owns that file — `vite.config.ts` reads `PORT`
+  so the dedicated copy needs no second config.

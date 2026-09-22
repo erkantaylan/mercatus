@@ -1,0 +1,44 @@
+/*
+ * The reset (BUILD-PLAN §7.1). Six rules, not a library.
+ *
+ * It exists so every front end starts from the same box model and the same body background, which
+ * is the difference between "consistent and plain" and "three apps that look almost the same".
+ */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--mc-bg);
+  color: var(--mc-fg);
+  font-family: var(--mc-font-sans);
+  font-size: var(--mc-text-base);
+  line-height: 1.5;
+}
+
+img,
+svg {
+  display: block;
+  max-width: 100%;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+/* A focus ring that survives a tenant's brand colour, because it is drawn in the text colour. */
+:focus-visible {
+  outline: 2px solid var(--mc-fg);
+  outline-offset: 2px;
+}

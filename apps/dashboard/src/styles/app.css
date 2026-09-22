@@ -1,0 +1,23 @@
+/*
+ * What the shared reset does not cover, and nothing else. Colours, spacing and type all come from
+ * @mercatus/ui/tokens.css -- if a value is written here, it is a bug.
+ */
+html,
+body,
+#root {
+  height: 100%;
+}
+
+h1,
+h2,
+h3,
+p,
+dl,
+dd,
+figure {
+  margin: 0;
+}
+
+a {
+  color: var(--mc-accent);
+}

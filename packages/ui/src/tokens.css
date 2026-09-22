@@ -1,0 +1,51 @@
+/*
+ * The design tokens (BUILD-PLAN §7.1). The ONLY place a colour, a spacing step or a font stack is
+ * written down in this repo.
+ *
+ * Plain CSS custom properties, deliberately: no component library, no Tailwind, no CSS-in-JS. A
+ * Next.js server component, a Vite SPA and a Fastify-rendered HTML page can all consume this file
+ * and there is nothing to configure in any of them.
+ *
+ * Per-tenant branding (DW) overrides --mc-accent, --mc-bg and --mc-fg on a WRAPPER element, never
+ * on :root -- that is the whole theming story. A tenant supplies three colours and a logo; it does
+ * not supply a template. Anything a tenant can set is set on that wrapper, so the storefront shell
+ * outside it (and the dashboard, which is ours) keeps the neutral defaults below.
+ */
+:root {
+  /* surfaces and text */
+  --mc-bg: #f6f7f9;
+  --mc-surface: #ffffff;
+  --mc-fg: #14181f;
+  --mc-fg-muted: #5c6673;
+  --mc-border: #d9dee5;
+
+  /* the one brand colour a tenant gets to move, and the text that sits on it */
+  --mc-accent: #1f5fd0;
+  --mc-accent-fg: #ffffff;
+
+  /* status. Not brandable: a danger that is not red is a danger nobody reads */
+  --mc-danger: #b3261e;
+  --mc-warning: #8a5a00;
+  --mc-success: #1b6b3a;
+
+  /* spacing, a 4px scale */
+  --mc-space-1: 4px;
+  --mc-space-2: 8px;
+  --mc-space-3: 12px;
+  --mc-space-4: 16px;
+  --mc-space-5: 24px;
+  --mc-space-6: 32px;
+
+  --mc-radius: 6px;
+  --mc-radius-lg: 10px;
+
+  --mc-font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mc-font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --mc-text-sm: 0.8125rem;
+  --mc-text-base: 0.9375rem;
+  --mc-text-lg: 1.125rem;
+  --mc-text-xl: 1.5rem;
+
+  --mc-shadow: 0 1px 2px rgb(20 24 31 / 8%), 0 1px 8px rgb(20 24 31 / 4%);
+}

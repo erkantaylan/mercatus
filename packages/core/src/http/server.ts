@@ -67,7 +67,17 @@ export async function createServer(options: CreateServerOptions): Promise<Mercat
 
   // The POC's front ends are served from other ports on the same machine, and a dedicated
   // instance's dashboard talks to its own API. Locked down when there is a real origin list.
-  await app.register(fastifyCors, { origin: true, credentials: true });
+  //
+  // `methods` is NOT optional: @fastify/cors 11 defaults to the CORS-safelisted set,
+  // 'GET,HEAD,POST', so a browser's preflight for PATCH or DELETE is answered with an
+  // allow-methods header that omits them and the real request is never sent. Found from the
+  // dashboard, where editing a product failed with no request in the log at all -- only the 204
+  // preflight (lessons/07b).
+  await app.register(fastifyCors, {
+    origin: true,
+    credentials: true,
+    methods: ['GET', 'HEAD', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
+  });
 
   if (options.docsPath !== null) {
     await app.register(fastifySwagger, {

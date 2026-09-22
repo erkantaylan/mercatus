@@ -1,0 +1,289 @@
+/*
+ * The small shared component set (BUILD-PLAN §7.1), living here until packages/ui is written.
+ * Plain CSS, tokens only: no component library, no Tailwind, no CSS-in-JS. Consistent and plain
+ * beats pretty, and every value below comes from tokens.css.
+ */
+
+/* ------------------------------------------------------------------ layout */
+.mc-shell {
+  display: flex;
+  min-height: 100%;
+  flex-direction: column;
+}
+
+.mc-topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--mc-space-5);
+  padding: var(--mc-space-3) var(--mc-space-5);
+  background: var(--mc-surface);
+  border-bottom: 1px solid var(--mc-border);
+}
+
+.mc-brand {
+  display: flex;
+  align-items: baseline;
+  gap: var(--mc-space-2);
+  font-weight: 650;
+}
+
+.mc-brand small {
+  color: var(--mc-fg-muted);
+  font-weight: 400;
+  font-size: var(--mc-text-sm);
+}
+
+.mc-nav {
+  display: flex;
+  gap: var(--mc-space-1);
+  flex: 1;
+}
+
+.mc-nav a {
+  padding: var(--mc-space-2) var(--mc-space-3);
+  border-radius: var(--mc-radius);
+  color: var(--mc-fg-muted);
+  text-decoration: none;
+}
+
+.mc-nav a:hover {
+  background: var(--mc-bg);
+}
+
+.mc-nav a.is-active {
+  background: var(--mc-bg);
+  color: var(--mc-fg);
+  font-weight: 600;
+}
+
+.mc-main {
+  width: 100%;
+  max-width: 980px;
+  margin: 0 auto;
+  padding: var(--mc-space-5);
+}
+
+.mc-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mc-space-4);
+}
+
+.mc-row {
+  display: flex;
+  align-items: center;
+  gap: var(--mc-space-3);
+}
+
+.mc-spacer {
+  flex: 1;
+}
+
+/* ------------------------------------------------------------- page header */
+.mc-pageheader {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--mc-space-3);
+  margin-bottom: var(--mc-space-4);
+}
+
+.mc-pageheader h1 {
+  font-size: var(--mc-text-xl);
+  font-weight: 650;
+}
+
+.mc-pageheader p {
+  color: var(--mc-fg-muted);
+  font-size: var(--mc-text-sm);
+}
+
+/* -------------------------------------------------------------------- card */
+.mc-card {
+  background: var(--mc-surface);
+  border: 1px solid var(--mc-border);
+  border-radius: var(--mc-radius-lg);
+  box-shadow: var(--mc-shadow);
+  padding: var(--mc-space-5);
+}
+
+.mc-card--flush {
+  padding: 0;
+  overflow: hidden;
+}
+
+/* ------------------------------------------------------------------ button */
+.mc-button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--mc-space-2);
+  padding: var(--mc-space-2) var(--mc-space-4);
+  border: 1px solid var(--mc-border);
+  border-radius: var(--mc-radius);
+  background: var(--mc-surface);
+  color: var(--mc-fg);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.mc-button:hover:not(:disabled) {
+  border-color: var(--mc-fg-muted);
+}
+
+.mc-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.mc-button--primary {
+  background: var(--mc-accent);
+  border-color: var(--mc-accent);
+  color: var(--mc-accent-fg);
+  font-weight: 600;
+}
+
+.mc-button--danger {
+  background: var(--mc-surface);
+  border-color: var(--mc-danger);
+  color: var(--mc-danger);
+}
+
+/* ------------------------------------------------------------ field, input */
+.mc-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mc-space-1);
+}
+
+.mc-field label {
+  font-size: var(--mc-text-sm);
+  font-weight: 600;
+}
+
+.mc-field .mc-hint {
+  color: var(--mc-fg-muted);
+  font-size: var(--mc-text-sm);
+}
+
+.mc-error {
+  color: var(--mc-danger);
+  font-size: var(--mc-text-sm);
+}
+
+.mc-input {
+  padding: var(--mc-space-2) var(--mc-space-3);
+  border: 1px solid var(--mc-border);
+  border-radius: var(--mc-radius);
+  background: var(--mc-surface);
+}
+
+.mc-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--mc-space-4);
+}
+
+/* ------------------------------------------------------------------- table */
+.mc-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--mc-text-base);
+}
+
+.mc-table th,
+.mc-table td {
+  padding: var(--mc-space-3) var(--mc-space-4);
+  text-align: left;
+  border-bottom: 1px solid var(--mc-border);
+}
+
+.mc-table th {
+  font-size: var(--mc-text-sm);
+  color: var(--mc-fg-muted);
+  font-weight: 600;
+  background: var(--mc-bg);
+}
+
+.mc-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.mc-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.mc-mono {
+  font-family: var(--mc-font-mono);
+  font-size: var(--mc-text-sm);
+}
+
+/* ------------------------------------------------------------------ banner */
+.mc-banner {
+  display: flex;
+  gap: var(--mc-space-3);
+  padding: var(--mc-space-3) var(--mc-space-4);
+  border: 1px solid var(--mc-border);
+  border-left-width: 4px;
+  border-radius: var(--mc-radius);
+  background: var(--mc-surface);
+  font-size: var(--mc-text-sm);
+}
+
+.mc-banner--info {
+  border-left-color: var(--mc-accent);
+}
+
+.mc-banner--warning {
+  border-left-color: var(--mc-warning);
+}
+
+.mc-banner--danger {
+  border-left-color: var(--mc-danger);
+}
+
+.mc-banner strong {
+  white-space: nowrap;
+}
+
+/* -------------------------------------------------------- empty, spinner */
+.mc-empty {
+  padding: var(--mc-space-6);
+  text-align: center;
+  color: var(--mc-fg-muted);
+}
+
+.mc-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--mc-border);
+  border-top-color: var(--mc-accent);
+  border-radius: 50%;
+  animation: mc-spin 0.7s linear infinite;
+}
+
+@keyframes mc-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ------------------------------------------------------------------- misc */
+.mc-muted {
+  color: var(--mc-fg-muted);
+}
+
+.mc-badge {
+  display: inline-block;
+  padding: 2px var(--mc-space-2);
+  border-radius: var(--mc-radius);
+  background: var(--mc-bg);
+  border: 1px solid var(--mc-border);
+  font-size: var(--mc-text-sm);
+}
+
+.mc-login {
+  width: 100%;
+  max-width: 380px;
+  margin: 10vh auto;
+}
