@@ -143,6 +143,7 @@ describe('licence view (CG3)', () => {
       validUntil: '2027-09-21',
       lastCheckedAt: '2026-09-22T00:00:00.000Z',
       lastSuccessAt: null,
+      pollingSince: '2026-09-21T00:00:00.000Z',
     });
     // "we cannot reach the control plane" is never reported as "you did not pay".
     expect(parsed.status).toBe('active');
@@ -158,6 +159,7 @@ describe('licence view (CG3)', () => {
         validUntil: null,
         lastCheckedAt: null,
         lastSuccessAt: null,
+        pollingSince: null,
       }).success,
     ).toBe(false);
   });

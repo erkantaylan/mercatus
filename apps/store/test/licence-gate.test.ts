@@ -7,9 +7,11 @@
  * fix it -- and that the two reasons a checkout can be refused are two codes, because collapsing
  * them makes our outage look like being cut off for non-payment.
  *
- * Needs a live Postgres, migrated. Same variables as api.test.ts:
+ * Brings its own Postgres, exactly as api.test.ts does. These nine cases were among the 24 that
+ * a `DATABASE_URL`-gated `describe.runIf` silently skipped inside a green `pnpm -r test`, which
+ * is how a licence gate stops being exercised without anyone deleting a line of it.
  *
- *   DATABASE_URL=... DATABASE_ADMIN_URL=... pnpm --filter @mercatus/store test
+ *   pnpm --filter @mercatus/store test
  */
 import { randomUUID } from 'node:crypto';
 
@@ -25,20 +27,12 @@ import {
   withExplicitTenantTx,
 } from '@mercatus/db-store';
 import { sql } from 'drizzle-orm';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 
 import type { StoreApp } from '../src/app.js';
 import { buildStoreApp } from '../src/app.js';
 
-const appUrl = process.env['DATABASE_URL'];
-const adminUrl = process.env['DATABASE_ADMIN_URL'];
-const hasDb = Boolean(appUrl && adminUrl);
-
-if (!hasDb) {
-  process.stderr.write(
-    '\n[licence-gate.test] SKIPPED: DATABASE_URL and DATABASE_ADMIN_URL are not set.\n\n',
-  );
-}
+let appUrl = '';
 
 const T = { id: randomUUID(), slug: `lic-${randomUUID().slice(0, 8)}` };
 
@@ -85,8 +79,9 @@ async function licence(
 }
 
 beforeAll(async () => {
-  if (!hasDb) return;
-  admin = createStoreDb(adminUrl!, { max: 2 });
+  const urls = inject('storeDb');
+  appUrl = urls.appUrl;
+  admin = createStoreDb(urls.adminUrl, { max: 2 });
   await withExplicitTenantTx(admin.db, T.id, async (tx) => {
     await mirrorTenant(tx, { id: T.id, slug: T.slug, name: T.slug });
     await ensureOrderCounter(tx, T.id);
@@ -152,7 +147,7 @@ function browse() {
   return store!.app.inject({ method: 'GET', url: `/t/${T.slug}/products` });
 }
 
-describe.runIf(hasDb)('the licence gate', () => {
+describe('the licence gate', () => {
   it('sells, serves and writes while the licence is active and fresh', async () => {
     await licence('active', 0);
     expect((await checkout()).statusCode).toBe(201);

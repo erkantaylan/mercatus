@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./testing": "./test/harness.ts",
     "./package.json": "./package.json"
   },
   "scripts": {

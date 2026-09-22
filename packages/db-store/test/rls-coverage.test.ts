@@ -81,9 +81,33 @@ describe('schema / policy coverage (BL1)', () => {
     });
   }
 
-  it('tenants is readable by the app role and nothing more', () => {
-    expect(rlsSql).toContain('grant select on table tenants to mercatus_app;');
-    expect(rlsSql).not.toMatch(/grant[^;]*insert[^;]*on table tenants/);
+  it('tenants is reachable only through the SECURITY DEFINER lookups (F2)', () => {
+    // The direct grant is gone: in a pooled deployment it let any code path with a store
+    // connection enumerate every merchant on the box.
+    expect(rlsSql).toContain('revoke all on table tenants from mercatus_app;');
+    expect(rlsSql).not.toMatch(/^\s*grant[^;]*on table tenants/m);
+    for (const fn of ['mercatus_tenant_by_slug(text)', 'mercatus_tenant_by_id(uuid)', 'mercatus_tenant_directory()']) {
+      // EXECUTE is granted to PUBLIC by default; a definer function left that way IS the leak.
+      expect(rlsSql).toContain(`revoke all on function ${fn} from public;`);
+      expect(rlsSql).toContain(`grant execute on function ${fn} to mercatus_app;`);
+    }
+    // A definer function without a pinned search_path lets its caller choose which table it reads.
+    const definers = [...rlsSql.matchAll(/security definer/g)];
+    expect(definers.length).toBe(3);
+    expect([...rlsSql.matchAll(/set search_path = public, pg_temp/g)].length).toBe(3);
+  });
+
+  it('the data plane database refuses PUBLIC a connection (F3)', () => {
+    expect(rolesSql).toMatch(/revoke connect on database %I from public/);
+  });
+
+  it('every foreign key in the migrations is composite with tenant_id (F1)', () => {
+    // The structural half of the cross-tenant denial of service: referential integrity runs with
+    // row security OFF, so a single-column FK lets one tenant pin another tenant's rows.
+    const fks = [...migrationSql.matchAll(/FOREIGN KEY \(([^)]*)\)/g)];
+    expect(fks.length).toBeGreaterThan(0);
+    const naked = fks.map((m) => m[1] ?? '').filter((cols) => !cols.includes('tenant_id'));
+    expect(naked, 'a single-column foreign key crosses tenants -- see OPEN-DEFECTS F1').toEqual([]);
   });
 
   it('the app role is created without BYPASSRLS and without SUPERUSER (BE2)', () => {

@@ -1,5 +1,5 @@
 {
-  "id": "fb47c5d5-07fc-4b78-9f75-9e49d2e97968",
+  "id": "5fd65a0c-5c30-4861-8896-0bc5370db25d",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -42,6 +42,12 @@
         },
         "last_success_at": {
           "name": "last_success_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "polling_since": {
+          "name": "polling_since",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
@@ -131,28 +137,32 @@
       },
       "indexes": {},
       "foreignKeys": {
-        "order_lines_order_id_orders_id_fk": {
-          "name": "order_lines_order_id_orders_id_fk",
+        "order_lines_order_tenant_fk": {
+          "name": "order_lines_order_tenant_fk",
           "tableFrom": "order_lines",
           "tableTo": "orders",
           "columnsFrom": [
-            "order_id"
+            "order_id",
+            "tenant_id"
           ],
           "columnsTo": [
-            "id"
+            "id",
+            "tenant_id"
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "order_lines_product_id_products_id_fk": {
-          "name": "order_lines_product_id_products_id_fk",
+        "order_lines_product_tenant_fk": {
+          "name": "order_lines_product_tenant_fk",
           "tableFrom": "order_lines",
           "tableTo": "products",
           "columnsFrom": [
-            "product_id"
+            "product_id",
+            "tenant_id"
           ],
           "columnsTo": [
-            "id"
+            "id",
+            "tenant_id"
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
@@ -205,6 +215,25 @@
           "notNull": true,
           "default": "'placed'"
         },
+        "payment_status": {
+          "name": "payment_status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'unpaid'"
+        },
+        "payment_ref": {
+          "name": "payment_ref",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "paid_at": {
+          "name": "paid_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
         "total_minor": {
           "name": "total_minor",
           "type": "integer",
@@ -250,22 +279,33 @@
         }
       },
       "foreignKeys": {
-        "orders_shopper_id_shoppers_id_fk": {
-          "name": "orders_shopper_id_shoppers_id_fk",
+        "orders_shopper_tenant_fk": {
+          "name": "orders_shopper_tenant_fk",
           "tableFrom": "orders",
           "tableTo": "shoppers",
           "columnsFrom": [
-            "shopper_id"
+            "shopper_id",
+            "tenant_id"
           ],
           "columnsTo": [
-            "id"
+            "id",
+            "tenant_id"
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "orders_id_tenant_uq": {
+          "name": "orders_id_tenant_uq",
+          "nullsNotDistinct": false,
+          "columns": [
+            "id",
+            "tenant_id"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -365,7 +405,16 @@
       },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "products_id_tenant_uq": {
+          "name": "products_id_tenant_uq",
+          "nullsNotDistinct": false,
+          "columns": [
+            "id",
+            "tenant_id"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {
         "products_price_minor_nonneg": {
@@ -468,7 +517,16 @@
       },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "shoppers_id_tenant_uq": {
+          "name": "shoppers_id_tenant_uq",
+          "nullsNotDistinct": false,
+          "columns": [
+            "id",
+            "tenant_id"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false

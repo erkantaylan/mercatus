@@ -23,7 +23,14 @@
 import type { LicencePollResult } from '@mercatus/contracts';
 import { licencePollResultSchema } from '@mercatus/contracts';
 import type { StoreDeps } from '../deps.js';
-import { countOrders, countProducts, recordLicenceAttempt, recordLicenceSuccess, withExplicitTenantTx } from '@mercatus/db-store';
+import {
+  countOrders,
+  countProducts,
+  listTenantDirectory,
+  recordLicenceAttempt,
+  recordLicenceSuccess,
+  withExplicitTenantTx,
+} from '@mercatus/db-store';
 import type { FastifyBaseLogger } from 'fastify';
 
 export interface LicenceAgent {
@@ -73,9 +80,10 @@ export function startLicenceAgent(deps: StoreDeps, log: FastifyBaseLogger): Lice
       return ref ? [{ id: ref.id, slug: ref.slug }] : [];
     }
     // `tenants` is the one data-plane table without RLS -- a policy on it would need the context
-    // that reading it produces -- so the agent can enumerate what this instance serves.
-    const rows = await deps.db.query.tenants.findMany();
-    return rows.map((row) => ({ id: row.id, slug: row.slug }));
+    // that reading it produces -- so the agent can enumerate what this instance serves. It does
+    // so through the SECURITY DEFINER directory (F2), which returns id and slug and nothing
+    // else: the app role has no SELECT on the table itself any more.
+    return listTenantDirectory(deps.db);
   }
 
   async function pull(slug: string): Promise<LicencePollResult> {
@@ -130,7 +138,7 @@ export function startLicenceAgent(deps: StoreDeps, log: FastifyBaseLogger): Lice
       // and logging it as a failure every few seconds during an outage buries the one line that
       // matters, which is the transition into read_only.
       log.warn({ tenant: target.slug, err: error }, 'licence poll failed; cached licence stands');
-      await withExplicitTenantTx(deps.db, target.id, (tx) => recordLicenceAttempt(tx));
+      await withExplicitTenantTx(deps.db, target.id, (tx) => recordLicenceAttempt(tx, target.id));
     }
   }
 

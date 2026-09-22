@@ -40,6 +40,7 @@ export async function recordLicenceSuccess(
       validUntil: result.validUntil,
       lastCheckedAt: now,
       lastSuccessAt: now,
+      pollingSince: now,
     })
     .onConflictDoUpdate({
       target: licenceState.tenantId,
@@ -49,6 +50,8 @@ export async function recordLicenceSuccess(
         validUntil: result.validUntil,
         lastCheckedAt: now,
         lastSuccessAt: now,
+        // Never moves once set: it is the anchor for an instance that has NEVER succeeded.
+        pollingSince: sql`coalesce(${licenceState.pollingSince}, ${now.toISOString()}::timestamptz)`,
       },
     });
 }
@@ -56,7 +59,27 @@ export async function recordLicenceSuccess(
 /**
  * A poll that did not reach the control plane. Touches `last_checked_at` and deliberately NOT
  * `status`: unreachable is not passive, and the cached status stands until the grace window ends.
+ *
+ * It is an UPSERT, and that is the whole fix for the second half of a verified fail-open. It used
+ * to be `update … set last_checked_at = now()` with no row to update, so on the exact machine
+ * that needs it most -- an instance whose FIRST registration failed, whose `licence_state` is
+ * therefore empty -- every failed poll wrote NOTHING. The store then reported
+ * `{state: healthy, lastCheckedAt: null}` and took orders for ever. Writing the row on the first
+ * failed attempt is what lets `runtimeState` see an instance that has never been licensed.
+ *
+ * `status` is left at its default (`active`) on insert, because a failed poll has learnt nothing
+ * about the tenant's own standing (CG3). What closes the shop is `polling_since` ageing past a
+ * few poll intervals with `last_success_at` still null, not a status this code invented.
  */
-export async function recordLicenceAttempt(tx: StoreTx): Promise<void> {
-  await tx.update(licenceState).set({ lastCheckedAt: sql`now()` });
+export async function recordLicenceAttempt(tx: StoreTx, tenantId: string): Promise<void> {
+  await tx
+    .insert(licenceState)
+    .values({ tenantId, lastCheckedAt: sql`now()`, pollingSince: sql`now()` })
+    .onConflictDoUpdate({
+      target: licenceState.tenantId,
+      set: {
+        lastCheckedAt: sql`now()`,
+        pollingSince: sql`coalesce(${licenceState.pollingSince}, now())`,
+      },
+    });
 }

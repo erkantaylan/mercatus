@@ -23,6 +23,7 @@ function row(overrides: Partial<LicenceStateRow>): LicenceStateRow {
     validUntil: '2027-01-01',
     lastCheckedAt: now,
     lastSuccessAt: now,
+    pollingSince: now,
     ...overrides,
   };
 }
@@ -35,6 +36,31 @@ describe('the licence state machine', () => {
   it('is healthy with no row at all -- an instance that was never told to poll is not in an outage', () => {
     expect(runtimeState(null, clock, now)).toBe('healthy');
     expect(checkoutBlock(licenceView(null, clock, now))).toBeNull();
+  });
+
+  it('is healthy while the first poll is still in flight -- a row with no timestamps yet', () => {
+    // The boot window, and the only reason "never succeeded" is ever healthy.
+    const booting = row({ lastSuccessAt: null, pollingSince: secondsAgo(4) });
+    expect(runtimeState(booting, clock, now)).toBe('healthy');
+  });
+
+  it('REFUSES to sell for an instance that has polled for a minute and never once succeeded', () => {
+    // The verified fail-open: a dedicated box whose credential the control plane rejects gets
+    // 401 on every tick for ever. It used to report `healthy` and take orders indefinitely,
+    // because the grace window is measured from a success that never happened. Grace is EARNED.
+    const neverLicensed = row({ lastSuccessAt: null, pollingSince: secondsAgo(60) });
+    const view = licenceView(neverLicensed, clock, now);
+    expect(view.state).toBe('read_only');
+    expect(checkoutBlock(view)).toBe('unreachable');
+    expect(storefrontLicence(view).checkout).toBe('blocked_unreachable');
+    // Not the merchant's fault and never reported as theirs (CG3).
+    expect(view.status).toBe('active');
+  });
+
+  it('gives a never-successful instance NO grace window, however long the window is', () => {
+    const generous: LicenceClock = { ...clock, graceSeconds: 259_200 };
+    const neverLicensed = row({ lastSuccessAt: null, pollingSince: secondsAgo(60) });
+    expect(runtimeState(neverLicensed, generous, now)).toBe('read_only');
   });
 
   it('is healthy while polls are landing', () => {

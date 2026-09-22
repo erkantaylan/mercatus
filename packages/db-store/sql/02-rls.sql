@@ -16,8 +16,61 @@
 -- and the seed and the migration step both connect as the owner.
 
 -- tenants deliberately has NO policy. It is the lookup that establishes tenant context, so a
--- policy on it would require the context it is being read to produce. Read-only for the app.
-grant select on table tenants to mercatus_app;
+-- policy on it would require the context it is being read to produce.
+--
+-- OPEN-DEFECTS F2: it used to be `grant select on table tenants to mercatus_app`, which in a
+-- POOLED deployment means any code path holding a store connection can enumerate every merchant
+-- on the box -- names, branding, the lot -- with no tenant context at all. The table grant is
+-- gone; three SECURITY DEFINER functions are the only way in, and each one returns exactly what
+-- its caller needs:
+--
+--   mercatus_tenant_by_slug(text)  one row, the request's tenant candidate (§3.6)
+--   mercatus_tenant_by_id(uuid)    one row, the tenant already established by the token
+--   mercatus_tenant_directory()    id and slug ONLY -- the pooled licence agent's poll list,
+--                                  which cannot be derived from an RLS-protected table because
+--                                  it is the thing that names the contexts
+--
+-- SECURITY DEFINER runs as the owner, which does hold SELECT. `set search_path` is not optional
+-- on a definer function: without it the caller chooses which `tenants` the body reads.
+revoke all on table tenants from mercatus_app;
+
+create or replace function mercatus_tenant_by_slug(p_slug text)
+returns table (id uuid, slug text, name text, branding jsonb, updated_at timestamptz)
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $fn$
+  select t.id, t.slug, t.name, t.branding, t.updated_at from tenants t where t.slug = p_slug;
+$fn$;
+
+create or replace function mercatus_tenant_by_id(p_id uuid)
+returns table (id uuid, slug text, name text, branding jsonb, updated_at timestamptz)
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $fn$
+  select t.id, t.slug, t.name, t.branding, t.updated_at from tenants t where t.id = p_id;
+$fn$;
+
+create or replace function mercatus_tenant_directory()
+returns table (id uuid, slug text)
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $fn$
+  select t.id, t.slug from tenants t order by t.slug;
+$fn$;
+
+-- EXECUTE is granted to PUBLIC by default; a definer function left that way is the leak.
+revoke all on function mercatus_tenant_by_slug(text) from public;
+revoke all on function mercatus_tenant_by_id(uuid) from public;
+revoke all on function mercatus_tenant_directory() from public;
+grant execute on function mercatus_tenant_by_slug(text) to mercatus_app;
+grant execute on function mercatus_tenant_by_id(uuid) to mercatus_app;
+grant execute on function mercatus_tenant_directory() to mercatus_app;
 
 -- licence_state
 alter table licence_state enable row level security;

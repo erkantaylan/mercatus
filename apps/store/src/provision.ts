@@ -13,9 +13,20 @@
  * token is spent on first use and the instance token is individually revocable. There is no push
  * path anywhere in it, which is the property that is expensive to undo later (CE7).
  *
- * It is idempotent and resumable (CK2): with a credential file already present it skips straight
- * to the mirror, because a bootstrap token can only ever be spent once and a re-run must not
- * brick a box. The tenant id comes from the control plane and is never invented here (BV1).
+ * It is idempotent and resumable (CK2): with a credential file already present it CHECKS that
+ * credential against the control plane before reusing it, and re-registers only if the control
+ * plane says it has never heard of it. The tenant id comes from the control plane and is never
+ * invented here (BV1).
+ *
+ * That check is not ceremony. Without it the second `aspire run` of AppHost B was silently
+ * broken for ever: `aspire stop` on AppHost A destroys A's Postgres, so the installation record
+ * is gone, while `.instance/zenith.json` survives on disk -- the box then polled with a token the
+ * new control plane has never seen, got 401 on every tick, and (before the licence fix) reported
+ * itself healthy while no heartbeat ever arrived. The README said B "never needs the bootstrap
+ * token again", which was true only until the control plane's database was rebuilt.
+ *
+ * Unreachable is NOT rejected (CG1, CG3). A control plane that cannot be reached at all leaves
+ * the credential alone and the store boots anyway; only an explicit refusal re-registers.
  *
  * Run: `pnpm --filter @mercatus/store provision`
  */
@@ -63,11 +74,39 @@ async function register(platformUrl: string, bootstrapToken: string): Promise<In
     // One generic answer is all the control plane gives (S1), so say what we know: which URL,
     // which status. The bootstrap token itself never appears in a log line.
     throw new Error(
-      `registration refused: ${String(response.status)} from ${platformUrl}/installations/register`,
+      `registration refused: ${String(response.status)} from ${platformUrl}/installations/register. ` +
+        'A bootstrap token is spent on first use: if this control plane still holds this ' +
+        "installation, the credential file is the one to keep; if its database was rebuilt, " +
+        're-seed it so the dev bootstrap token is unspent again.',
     );
   }
   const result = registerInstallationResultSchema.parse(await response.json());
   return { ...result, registeredAt: new Date().toISOString() };
+}
+
+/**
+ * Does the control plane still know this credential? `GET /tenants/:slug/licence` is the same
+ * call the licence agent makes every few seconds, so a green answer here means the box is
+ * genuinely provisioned rather than merely holding a file.
+ */
+async function credentialVerdict(
+  platformUrl: string,
+  credential: InstanceCredential,
+): Promise<'ok' | 'rejected' | 'unreachable'> {
+  let response: Response;
+  try {
+    response = await fetch(`${platformUrl}/tenants/${credential.tenantSlug}/licence`, {
+      headers: { authorization: `Bearer ${credential.instanceToken}`, accept: 'application/json' },
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch {
+    return 'unreachable';
+  }
+  if (response.ok) return 'ok';
+  // 401 unknown credential, 403 someone else's tenant, 404 a control plane that has never heard
+  // of this tenant at all -- every one of them means this file is not a working credential.
+  if ([401, 403, 404].includes(response.status)) return 'rejected';
+  return 'unreachable';
 }
 
 export async function provision(): Promise<void> {
@@ -77,12 +116,36 @@ export async function provision(): Promise<void> {
   const tenantSlug = required('TENANT_SLUG');
 
   const existing = readInstanceCredential(credentialPath);
-  const credential = existing ?? (await register(platformUrl, required('INSTANCE_BOOTSTRAP_TOKEN')));
+  let credential: InstanceCredential;
   if (existing) {
-    process.stdout.write(
-      `  already registered as installation ${credential.installationId}; bootstrap token stays spent\n`,
-    );
+    const verdict = await credentialVerdict(platformUrl, existing);
+    if (verdict === 'ok') {
+      credential = existing;
+      process.stdout.write(
+        `  credential at ${credentialPath} accepted by ${platformUrl}: installation ${existing.installationId}\n`,
+      );
+    } else if (verdict === 'unreachable') {
+      credential = existing;
+      process.stdout.write(
+        `  ${platformUrl} could not be reached; keeping the credential at ${credentialPath} ` +
+          'and starting anyway (CG1)\n',
+      );
+    } else {
+      // The control plane refused it. Its database was rebuilt, or this installation was
+      // revoked. Spend the bootstrap token again rather than leaving a box that polls for ever
+      // into a 401 -- and say so, because "re-registered" is an event an operator should see.
+      process.stdout.write(
+        `  ${platformUrl} REFUSED the credential at ${credentialPath} (installation ` +
+          `${existing.installationId}). Re-registering.\n`,
+      );
+      credential = await register(platformUrl, required('INSTANCE_BOOTSTRAP_TOKEN'));
+      writeInstanceCredential(credentialPath, credential);
+      process.stdout.write(
+        `  re-registered as installation ${credential.installationId} for ${credential.tenantSlug}\n`,
+      );
+    }
   } else {
+    credential = await register(platformUrl, required('INSTANCE_BOOTSTRAP_TOKEN'));
     writeInstanceCredential(credentialPath, credential);
     process.stdout.write(
       `  registered installation ${credential.installationId} for ${credential.tenantSlug}\n`,

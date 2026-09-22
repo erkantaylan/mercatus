@@ -4,7 +4,8 @@ CREATE TABLE "licence_state" (
 	"entitlements" jsonb DEFAULT '{}'::jsonb NOT NULL,
 	"valid_until" date,
 	"last_checked_at" timestamp with time zone,
-	"last_success_at" timestamp with time zone
+	"last_success_at" timestamp with time zone,
+	"polling_since" timestamp with time zone
 );
 --> statement-breakpoint
 CREATE TABLE "order_counters" (
@@ -29,9 +30,13 @@ CREATE TABLE "orders" (
 	"number" bigint NOT NULL,
 	"shopper_id" uuid NOT NULL,
 	"status" text DEFAULT 'placed' NOT NULL,
+	"payment_status" text DEFAULT 'unpaid' NOT NULL,
+	"payment_ref" text,
+	"paid_at" timestamp with time zone,
 	"total_minor" integer NOT NULL,
 	"currency" text DEFAULT 'TRY' NOT NULL,
-	"placed_at" timestamp with time zone DEFAULT now() NOT NULL
+	"placed_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "orders_id_tenant_uq" UNIQUE("id","tenant_id")
 );
 --> statement-breakpoint
 CREATE TABLE "products" (
@@ -45,6 +50,7 @@ CREATE TABLE "products" (
 	"stock" integer DEFAULT 0 NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "products_id_tenant_uq" UNIQUE("id","tenant_id"),
 	CONSTRAINT "products_price_minor_nonneg" CHECK ("products"."price_minor" >= 0),
 	CONSTRAINT "products_stock_nonneg" CHECK ("products"."stock" >= 0)
 );
@@ -55,7 +61,8 @@ CREATE TABLE "shoppers" (
 	"subject" text NOT NULL,
 	"phone" text NOT NULL,
 	"name" text,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "shoppers_id_tenant_uq" UNIQUE("id","tenant_id")
 );
 --> statement-breakpoint
 CREATE TABLE "tenants" (
@@ -67,9 +74,9 @@ CREATE TABLE "tenants" (
 	CONSTRAINT "tenants_slug_unique" UNIQUE("slug")
 );
 --> statement-breakpoint
-ALTER TABLE "order_lines" ADD CONSTRAINT "order_lines_order_id_orders_id_fk" FOREIGN KEY ("order_id") REFERENCES "public"."orders"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "order_lines" ADD CONSTRAINT "order_lines_product_id_products_id_fk" FOREIGN KEY ("product_id") REFERENCES "public"."products"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "orders" ADD CONSTRAINT "orders_shopper_id_shoppers_id_fk" FOREIGN KEY ("shopper_id") REFERENCES "public"."shoppers"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "order_lines" ADD CONSTRAINT "order_lines_order_tenant_fk" FOREIGN KEY ("order_id","tenant_id") REFERENCES "public"."orders"("id","tenant_id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "order_lines" ADD CONSTRAINT "order_lines_product_tenant_fk" FOREIGN KEY ("product_id","tenant_id") REFERENCES "public"."products"("id","tenant_id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "orders" ADD CONSTRAINT "orders_shopper_tenant_fk" FOREIGN KEY ("shopper_id","tenant_id") REFERENCES "public"."shoppers"("id","tenant_id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 CREATE UNIQUE INDEX "orders_tenant_number_uq" ON "orders" USING btree ("tenant_id","number");--> statement-breakpoint
 CREATE UNIQUE INDEX "products_tenant_sku_uq" ON "products" USING btree ("tenant_id","sku");--> statement-breakpoint
 CREATE UNIQUE INDEX "shoppers_tenant_phone_uq" ON "shoppers" USING btree ("tenant_id","phone");--> statement-breakpoint

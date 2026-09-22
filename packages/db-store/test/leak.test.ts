@@ -325,11 +325,37 @@ describe('cross-tenant leak suite (BL1)', () => {
   });
 
   describe('tenants: the one table without RLS is held by grants instead', () => {
-    it('the app role may read it -- that is what establishes tenant context', async () => {
-      const rows = await app.db.execute<{ id: string }>(
-        sql`select id from tenants where id in (${acmeOf().id}, ${borgOf().id})`,
+    it('the app role may NOT read the table directly any more (OPEN-DEFECTS F2)', async () => {
+      // It used to hold SELECT, which in a pooled deployment means any code path with a store
+      // connection can enumerate every merchant on the box, with no tenant context at all.
+      const detail = await capture(() =>
+        app.db.execute(sql`select id, name, branding from tenants`),
       );
-      expect(rows.length).toBe(2);
+      expect(detail, 'mercatus_app can still read the tenants table').not.toBe('');
+      expect(detail).toContain('code=42501');
+      expect(detail).toMatch(/permission denied/i);
+    });
+
+    it('it reads ONE tenant at a time, through the SECURITY DEFINER lookup', async () => {
+      const rows = await app.db.execute<{ id: string; slug: string }>(
+        sql`select id, slug from mercatus_tenant_by_slug(${acmeOf().slug})`,
+      );
+      expect(rows.length).toBe(1);
+      expect(rows[0]?.id).toBe(acmeOf().id);
+
+      const byId = await app.db.execute<{ slug: string }>(
+        sql`select slug from mercatus_tenant_by_id(${borgOf().id}::uuid)`,
+      );
+      expect(byId[0]?.slug).toBe(borgOf().slug);
+    });
+
+    it('the poll directory returns id and slug and nothing else', async () => {
+      const rows = await app.db.execute<Record<string, unknown>>(
+        sql`select * from mercatus_tenant_directory()`,
+      );
+      expect(rows.length).toBeGreaterThanOrEqual(2);
+      // No name, no branding: a poll list is not a customer list.
+      expect(Object.keys(rows[0] ?? {}).sort()).toEqual(['id', 'slug']);
     });
 
     for (const [what, statement] of [
@@ -435,4 +461,128 @@ describe('cross-tenant leak suite (BL1)', () => {
       expect(rows[0]?.tenant_id).toBe(acmeOf().id);
     });
   });
+
+  /**
+   * OPEN-DEFECTS F1 -- the defect this suite was GREEN against.
+   *
+   * Postgres runs referential-integrity checks with row security OFF. A single-column foreign key
+   * therefore lets a row whose OWN tenant_id passes `with check` point at another tenant's parent:
+   * acme inserts an order_line carrying acme's tenant_id but naming borg's order and borg's
+   * product. Borg cannot see the planted row and can never again delete that order or that
+   * product -- a cross-tenant denial of service costing one INSERT, reproduced live on the demo
+   * database before this was fixed.
+   *
+   * The fix is `unique (id, tenant_id)` on the parents and composite foreign keys, so the tenant
+   * is INSIDE the constraint. The first test below is structural on purpose: it fails the moment
+   * anybody adds a single-column FK to this schema, which is the only way to keep a suite honest
+   * about a class of bug rather than one instance of it (BL1).
+   */
+  describe('referential integrity is tenant-consistent (F1)', () => {
+    it('EVERY foreign key in the data plane carries tenant_id', async () => {
+      const rows = await app.db.execute<{ conname: string; tbl: string; cols: string[] }>(
+        sql`select con.conname,
+                   con.conrelid::regclass::text as tbl,
+                   array_agg(att.attname order by att.attname) as cols
+            from pg_constraint con
+            join unnest(con.conkey) as k(attnum) on true
+            join pg_attribute att on att.attrelid = con.conrelid and att.attnum = k.attnum
+            where con.contype = 'f' and con.connamespace = 'public'::regnamespace
+            group by con.conname, con.conrelid`,
+      );
+      expect(rows.length, 'no foreign keys found at all -- the query is wrong').toBeGreaterThan(0);
+      const naked = rows.filter((r) => !r.cols.includes('tenant_id'));
+      expect(
+        naked.map((r) => `${r.tbl}.${r.conname} (${r.cols.join(', ')})`),
+        'a single-column foreign key is a cross-tenant denial of service (F1)',
+      ).toEqual([]);
+    });
+
+    it("acme cannot plant an order_line on borg's order", async () => {
+      const detail = await capture(() =>
+        acme(() =>
+          withTenantTx(app.db, (tx) =>
+            tx.execute(
+              sql`insert into order_lines (tenant_id, order_id, product_id, title_snapshot, unit_price_minor, qty)
+                  values (${acmeOf().id}, ${borgOf().orderIds[0]}::uuid, ${acmeOf().productId}::uuid,
+                          'Planted by acme', 1, 1)`,
+            ),
+          ),
+        ),
+      );
+      expect(detail, "acme planted a line on borg's order").not.toBe('');
+      // 23503: the FK itself refuses it now, rather than accepting a row that RLS then hides.
+      expect(detail).toContain('code=23503');
+    });
+
+    it("acme cannot plant an order_line on borg's product", async () => {
+      const detail = await capture(() =>
+        acme(() =>
+          withTenantTx(app.db, (tx) =>
+            tx.execute(
+              sql`insert into order_lines (tenant_id, order_id, product_id, title_snapshot, unit_price_minor, qty)
+                  values (${acmeOf().id}, ${acmeOf().orderIds[0]}::uuid, ${borgOf().productId}::uuid,
+                          'Planted by acme', 1, 1)`,
+            ),
+          ),
+        ),
+      );
+      expect(detail, "acme planted a line naming borg's product").not.toBe('');
+      expect(detail).toContain('code=23503');
+    });
+
+    it("acme cannot attach its own order to borg's shopper", async () => {
+      const detail = await capture(() =>
+        acme(() =>
+          withTenantTx(app.db, (tx) =>
+            tx.execute(
+              sql`insert into orders (tenant_id, number, shopper_id, total_minor)
+                  values (${acmeOf().id}, 999123, ${borgOf().shared.id}::uuid, 1)`,
+            ),
+          ),
+        ),
+      );
+      expect(detail, "acme attached an order to borg's shopper").not.toBe('');
+      expect(detail).toContain('code=23503');
+    });
+
+    it('and borg can still delete its own order and its own product afterwards', async () => {
+      // The victim's half of the attack: the planted row was invisible to borg and blocked every
+      // future delete. Rolled back, because the fixture's rows are the rest of the suite's.
+      class RollbackSignal extends Error {
+        public override readonly name = 'RollbackSignal';
+      }
+      let deletedOrders = 0;
+      let deletedProducts = 0;
+      try {
+        await app.db.transaction(async (tx) => {
+          await tx.execute(sql`select set_config('app.tenant_id', ${borgOf().id}, true)`);
+          await tx.execute(sql`delete from order_lines`);
+          const orders = await tx.execute(sql`delete from orders returning id`);
+          deletedOrders = orders.length;
+          const products = await tx.execute(sql`delete from products returning id`);
+          deletedProducts = products.length;
+          throw new RollbackSignal('rolling back the victim probe');
+        });
+      } catch (error) {
+        if ((error as { name?: string }).name !== 'RollbackSignal') throw error;
+      }
+      expect(deletedOrders).toBeGreaterThan(0);
+      expect(deletedProducts).toBeGreaterThan(0);
+    });
+  });
+
+  describe('the connect boundary (F3)', () => {
+    it('PUBLIC cannot connect to the data plane database', async () => {
+      // db-platform has always done this; db-store never did, so any role later added to the
+      // cluster got a free foothold here. Table grants denied it today -- a boundary that
+      // depends on nobody ever adding a role is not a boundary.
+      const rows = await app.db.execute<{ n: number }>(
+        sql`select count(*)::int as n
+            from aclexplode((select datacl from pg_database where datname = current_database()))
+            where grantee = 0 and privilege_type = 'CONNECT'`,
+      );
+      expect(rows[0]?.n, 'connect is still granted to PUBLIC on this database').toBe(0);
+    });
+  });
+
 });

@@ -13,11 +13,12 @@
  *   - a staff token plus another merchant's URL is a refusal, not a switch (BI1)
  *   - a shopper token cannot reach the staff surface and vice versa (BH1)
  *
- * Needs a live Postgres, migrated. DATABASE_ADMIN_URL is needed only to create the two fixture
- * tenants, which is an owner's job -- the app role holds SELECT on `tenants` and nothing more:
+ * It brings its OWN Postgres (test/global-setup.ts -> @mercatus/db-store/testing): roles,
+ * migrations and policies, fresh per run. No environment variable decides whether it runs, which
+ * is the whole fix -- `DATABASE_URL`-gated `describe.runIf` meant `pnpm -r test` was green with
+ * 24 of these tests never executed.
  *
- *   DATABASE_SUPERUSER_URL=... DATABASE_ADMIN_URL=... pnpm --filter @mercatus/db-store migrate
- *   DATABASE_URL=... DATABASE_ADMIN_URL=... pnpm --filter @mercatus/store test
+ *   pnpm --filter @mercatus/store test
  */
 import { randomUUID } from 'node:crypto';
 
@@ -25,22 +26,14 @@ import type { StoreConfig } from '@mercatus/core';
 import { loadStoreConfig } from '@mercatus/core';
 import type { StoreDbHandle } from '@mercatus/db-store';
 import { createStoreDb, ensureOrderCounter, mirrorTenant, withExplicitTenantTx } from '@mercatus/db-store';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 
 import type { StoreApp } from '../src/app.js';
 import { buildStoreApp } from '../src/app.js';
 
-const appUrl = process.env['DATABASE_URL'];
-const adminUrl = process.env['DATABASE_ADMIN_URL'];
-const hasDb = Boolean(appUrl && adminUrl);
-
-if (!hasDb) {
-  // A skipped suite nobody notices is how an isolation guarantee quietly stops being true.
-  process.stderr.write(
-    '\n[api.test] SKIPPED: DATABASE_URL and DATABASE_ADMIN_URL are not set, so the store API ' +
-      'suite did not run. See the header of this file.\n\n',
-  );
-}
+/** Set in beforeAll from the container global setup owns. The app role, never the owner (BE2). */
+let appUrl = '';
+let adminUrl = '';
 
 const A = { id: randomUUID(), slug: `api-a-${randomUUID().slice(0, 8)}` };
 const B = { id: randomUUID(), slug: `api-b-${randomUUID().slice(0, 8)}` };
@@ -73,8 +66,10 @@ async function devLoginStaff(slug: string): Promise<string> {
 }
 
 beforeAll(async () => {
-  if (!hasDb) return;
-  admin = createStoreDb(adminUrl!, { max: 2 });
+  const urls = inject('storeDb');
+  appUrl = urls.appUrl;
+  adminUrl = urls.adminUrl;
+  admin = createStoreDb(adminUrl, { max: 2 });
   for (const tenant of [A, B]) {
     await withExplicitTenantTx(admin.db, tenant.id, async (tx) => {
       await mirrorTenant(tx, { id: tenant.id, slug: tenant.slug, name: tenant.slug });
@@ -101,7 +96,7 @@ afterAll(async () => {
   await admin?.close();
 });
 
-describe.runIf(hasDb)('the store API', () => {
+describe('the store API', () => {
   it('reports its version and mode without a tenant or a token', async () => {
     const res = await store!.app.inject({ method: 'GET', url: '/health' });
     expect(res.statusCode).toBe(200);

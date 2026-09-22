@@ -16,11 +16,13 @@ import {
   bigint,
   check,
   date,
+  foreignKey,
   integer,
   jsonb,
   pgTable,
   text,
   timestamp,
+  unique,
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
@@ -70,6 +72,17 @@ export const licenceState = pgTable('licence_state', {
   lastCheckedAt: timestamp('last_checked_at', { withTimezone: true }),
   /** Last poll that actually reached the control plane. The grace window is measured from here. */
   lastSuccessAt: timestamp('last_success_at', { withTimezone: true }),
+  /**
+   * The FIRST poll attempt this instance ever made, successful or not. Never cleared.
+   *
+   * It exists because "never succeeded" and "not configured to poll" are different states and
+   * were being collapsed into one: an instance whose credential the control plane rejects polls,
+   * is refused on every tick, and used to keep reporting `healthy` for ever with `last_success_at`
+   * null -- selling the whole time. Grace is EARNED by a success (CG1, CG2); an instance that has
+   * never authenticated has earned none, so once this is older than a few poll intervals it is
+   * read_only rather than healthy.
+   */
+  pollingSince: timestamp('polling_since', { withTimezone: true }),
 });
 
 export const products = pgTable(
@@ -89,6 +102,11 @@ export const products = pgTable(
   (t) => [
     // BG1: composite with tenant_id. Two merchants may both sell SKU "A-1".
     uniqueIndex('products_tenant_sku_uq').on(t.tenantId, t.sku),
+    // Not redundant with the primary key. It is the target a TENANT-CONSISTENT foreign key needs
+    // (OPEN-DEFECTS F1): postgres runs referential-integrity checks with row security OFF, so a
+    // child pointing at `products (id)` alone can name ANOTHER tenant's product and the policy
+    // never sees it. Referencing `(id, tenant_id)` makes the parent's tenant part of the check.
+    unique('products_id_tenant_uq').on(t.id, t.tenantId),
     check('products_price_minor_nonneg', sql`${t.priceMinor} >= 0`),
     check('products_stock_nonneg', sql`${t.stock} >= 0`),
   ],
@@ -112,6 +130,8 @@ export const shoppers = pgTable(
   (t) => [
     uniqueIndex('shoppers_tenant_phone_uq').on(t.tenantId, t.phone),
     uniqueIndex('shoppers_tenant_subject_uq').on(t.tenantId, t.subject),
+    /** The tenant-consistent FK target for `orders.shopper_id` (F1). See `products`. */
+    unique('shoppers_id_tenant_uq').on(t.id, t.tenantId),
   ],
 );
 
@@ -122,15 +142,39 @@ export const orders = pgTable(
     tenantId: uuid('tenant_id').notNull(),
     /** Per-tenant and gapless, from order_counters (BG2). Never a Postgres sequence. */
     number: bigint('number', { mode: 'number' }).notNull(),
-    shopperId: uuid('shopper_id')
-      .notNull()
-      .references(() => shoppers.id),
+    /** FK is composite, in the table extras below: a single-column one crosses tenants (F1). */
+    shopperId: uuid('shopper_id').notNull(),
     status: text('status').$type<'placed' | 'paid' | 'cancelled'>().notNull().default('placed'),
+    /**
+     * Did this order get paid? The one question a merchant dashboard exists to answer, and it
+     * used to live only in the storefront process's memory -- lost on restart, never in any
+     * database, never shown to the merchant. The bank is the authority; this is what it said.
+     */
+    paymentStatus: text('payment_status')
+      .$type<'unpaid' | 'paid' | 'declined'>()
+      .notNull()
+      .default('unpaid'),
+    /** `fb_<uuid>` -- the provider's own reference, so a bank record is findable from an order. */
+    paymentRef: text('payment_ref'),
+    paidAt: timestamp('paid_at', { withTimezone: true }),
     totalMinor: integer('total_minor').notNull(),
     currency: text('currency').notNull().default('TRY'),
     placedAt: timestamp('placed_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [uniqueIndex('orders_tenant_number_uq').on(t.tenantId, t.number)],
+  (t) => [
+    uniqueIndex('orders_tenant_number_uq').on(t.tenantId, t.number),
+    unique('orders_id_tenant_uq').on(t.id, t.tenantId),
+    /**
+     * TENANT-CONSISTENT (F1). `orders.shopper_id -> shoppers.id` alone let one tenant's order
+     * name another tenant's shopper row: the RI check runs with row security off, so `with check`
+     * validated the order's own tenant_id and never its parent's.
+     */
+    foreignKey({
+      columns: [t.shopperId, t.tenantId],
+      foreignColumns: [shoppers.id, shoppers.tenantId],
+      name: 'orders_shopper_tenant_fk',
+    }),
+  ],
 );
 
 /**
@@ -146,17 +190,35 @@ export const orderLines = pgTable(
   {
     id: uuid('id').primaryKey().defaultRandom(),
     tenantId: uuid('tenant_id').notNull(),
-    orderId: uuid('order_id')
-      .notNull()
-      .references(() => orders.id),
-    productId: uuid('product_id')
-      .notNull()
-      .references(() => products.id),
+    orderId: uuid('order_id').notNull(),
+    productId: uuid('product_id').notNull(),
     titleSnapshot: text('title_snapshot').notNull(),
     unitPriceMinor: integer('unit_price_minor').notNull(),
     qty: integer('qty').notNull(),
   },
-  (t) => [check('order_lines_qty_positive', sql`${t.qty} > 0`)],
+  (t) => [
+    check('order_lines_qty_positive', sql`${t.qty} > 0`),
+    /**
+     * The defect this schema shipped with, and the fix (OPEN-DEFECTS F1).
+     *
+     * Single-column FKs here were a CROSS-TENANT DENIAL OF SERVICE costing one INSERT: tenant B
+     * inserted an order_line carrying B's tenant_id -- which `with check` accepts, it is B's own
+     * row -- pointing at tenant A's order and A's product. A could then never delete that order
+     * or that product again ("violates foreign key constraint"), could not see the planted row,
+     * and had no way to remove it. Referential integrity is checked with row security OFF; the
+     * only fix is to put the tenant INSIDE the constraint.
+     */
+    foreignKey({
+      columns: [t.orderId, t.tenantId],
+      foreignColumns: [orders.id, orders.tenantId],
+      name: 'order_lines_order_tenant_fk',
+    }),
+    foreignKey({
+      columns: [t.productId, t.tenantId],
+      foreignColumns: [products.id, products.tenantId],
+      name: 'order_lines_product_tenant_fk',
+    }),
+  ],
 );
 
 /**

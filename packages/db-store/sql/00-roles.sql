@@ -28,8 +28,14 @@ alter role mercatus_app   with login nosuperuser nobypassrls nocreatedb nocreate
 
 do $$
 begin
-  execute format('grant connect on database %I to mercatus_owner, mercatus_app', current_database());
   execute format('alter database %I owner to mercatus_owner', current_database());
+  -- OPEN-DEFECTS F3: the connect boundary was one-directional. db-platform/sql/00-roles.sql has
+  -- always revoked CONNECT from public, so the data plane's mercatus_app cannot open the control
+  -- plane's database; this file did not, so mercatus_platform_app -- and any role later added to
+  -- the cluster -- had a free foothold in the data plane. Table grants denied it today; a
+  -- boundary that depends on nobody ever adding a role is not a boundary.
+  execute format('revoke connect on database %I from public', current_database());
+  execute format('grant connect on database %I to mercatus_owner, mercatus_app', current_database());
 end
 $$;
 

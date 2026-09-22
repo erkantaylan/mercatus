@@ -169,6 +169,12 @@ export const licenceViewSchema = z.object({
   lastCheckedAt: isoDateTimeSchema.nullable(),
   /** The grace window is measured from here, not from lastCheckedAt (CG2). */
   lastSuccessAt: isoDateTimeSchema.nullable(),
+  /**
+   * The first poll attempt this instance ever made. Null means it has never been configured to
+   * poll at all; a date with `lastSuccessAt` still null means it has been trying and has never
+   * once been answered -- which is a store that is NOT licensed, not a healthy one.
+   */
+  pollingSince: isoDateTimeSchema.nullable(),
 });
 
 /** What the degradation demo curls. */

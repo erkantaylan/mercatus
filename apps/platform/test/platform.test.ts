@@ -17,21 +17,20 @@
  *   - a bootstrap token is one-time; an instance token reads its own tenant and no other (CE1)
  *   - a merchant's staff token is not an operator token (BH1)
  *
- * Needs a live Postgres, migrated:
- *   DATABASE_SUPERUSER_URL=... DATABASE_ADMIN_URL=... pnpm --filter @mercatus/db-platform migrate
- *   PLATFORM_DATABASE_URL=... pnpm --filter @mercatus/platform test
+ * It brings its OWN Postgres (test/global-setup.ts -> @mercatus/db-platform/testing), migrated
+ * and granted, fresh per run:
  *
- * PLATFORM_DATABASE_URL, not DATABASE_URL: `pnpm check` runs every package's suite in one
- * process tree, and the data plane's suites want the `store` database in DATABASE_URL at the
- * same moment this one wants `platform`. One variable cannot be both. It falls back to
- * DATABASE_URL when only this package is being run, and it is declared in turbo.json's `test`
- * task -- a variable turbo does not know about is a suite that skips while the run stays green
- * (lessons/03).
+ *   pnpm --filter @mercatus/platform test
+ *
+ * No variable decides whether it runs. It used to key on PLATFORM_DATABASE_URL and
+ * `describe.skipIf` itself away, and the result was `Tests 22 skipped (22)` inside a green
+ * `pnpm -r test`: the entire control plane, unexercised, indistinguishable from passing. Owning
+ * the container removes the skip path, which is the same fix db-store's suite already had.
  */
 import { randomUUID } from 'node:crypto';
 
 import { StubAuthAdapter } from '@mercatus/core';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 
 import type { PlatformApp } from '../src/app.js';
 import { buildPlatformApp } from '../src/app.js';
@@ -41,16 +40,8 @@ import { loadPlatformConfig } from '../src/config.js';
 import { verifyLicenceToken } from '../src/licence.js';
 import { signCallback } from '../src/signature.js';
 
-const databaseUrl = process.env['PLATFORM_DATABASE_URL'] ?? process.env['DATABASE_URL'];
-const hasDb = Boolean(databaseUrl);
-
-if (!hasDb) {
-  // A skipped suite nobody notices is how a control plane quietly stops being exercised.
-  process.stderr.write(
-    '\n[platform.test] SKIPPED: neither PLATFORM_DATABASE_URL nor DATABASE_URL is set, so the ' +
-      'control-plane suite did not run. See the header of this file.\n\n',
-  );
-}
+/** Set in beforeAll from the container global setup owns: the app role, never the owner. */
+let databaseUrl = '';
 
 const STUB_SECRET = 'test-stub-secret-that-is-long-enough';
 const BANK_SECRET = 'test-fake-bank-hmac-secret-at-least-32-chars';
@@ -123,7 +114,7 @@ async function signup(overrides: Record<string, unknown> = {}) {
 }
 
 beforeAll(async () => {
-  if (!hasDb) return;
+  databaseUrl = inject('platformDb').appUrl;
   bank = stubBank();
   platform = await buildPlatformApp(config(), { bank });
   await platform.app.ready();
@@ -136,7 +127,7 @@ afterAll(async () => {
   await platform?.close();
 });
 
-describe.skipIf(!hasDb)('buy a store', () => {
+describe('buy a store', () => {
   it('creates the tenant pending, with no licence and no activation date (Q13)', async () => {
     const res = await signup();
     expect(res.statusCode).toBe(201);
@@ -239,7 +230,7 @@ describe.skipIf(!hasDb)('buy a store', () => {
   });
 });
 
-describe.skipIf(!hasDb)('the signed licence', () => {
+describe('the signed licence', () => {
   it('verifies with the published public key and nothing else (CG1)', async () => {
     const signed = await platform!.app.inject({
       method: 'GET',
@@ -280,7 +271,7 @@ describe.skipIf(!hasDb)('the signed licence', () => {
   });
 });
 
-describe.skipIf(!hasDb)('installations', () => {
+describe('installations', () => {
   let bootstrapToken = '';
 
   it('hands out a one-time bootstrap token and burns it on first use (CE1)', async () => {
@@ -377,7 +368,7 @@ describe.skipIf(!hasDb)('installations', () => {
   });
 });
 
-describe.skipIf(!hasDb)('the console flip (ES, CG3)', () => {
+describe('the console flip (ES, CG3)', () => {
   it('sets passive, and the next poll and the next signed licence both say so', async () => {
     const flip = await platform!.app.inject({
       method: 'POST',
@@ -438,7 +429,7 @@ describe.skipIf(!hasDb)('the console flip (ES, CG3)', () => {
   });
 });
 
-describe.skipIf(!hasDb)('operator credentials (BH1)', () => {
+describe('operator credentials (BH1)', () => {
   it('refuses the console with no token', async () => {
     const res = await platform!.app.inject({ method: 'GET', url: '/tenants' });
     expect(res.statusCode).toBe(401);

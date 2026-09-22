@@ -14,14 +14,7 @@
     },
     "test": {
       "outputs": [],
-      "env": [
-        "DATABASE_URL",
-        "DATABASE_ADMIN_URL",
-        "DATABASE_SUPERUSER_URL",
-        "PLATFORM_DATABASE_URL",
-        "AUTH_STUB_SECRET",
-        "MERCATUS_LEAK_SABOTAGE"
-      ]
+      "env": ["MERCATUS_LEAK_SABOTAGE"]
     },
     "migrate": {
       "cache": false,
