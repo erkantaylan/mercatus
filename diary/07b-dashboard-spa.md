@@ -77,9 +77,27 @@ ran) plus `src/ui/ui.css`. No colour or spacing value is written outside the tok
 
 ## State left behind
 
-- Nothing running that I started: the store API process, the Vite dev server and the throwaway
-  Postgres container `mercatus-dash-gate-pg` were all stopped and removed at the end.
-- The gate used its own Postgres on **:55432** rather than `aspire run`, so two other agents
-  building front ends at the same time were never fighting me for 4001/4002/8080. The store API
-  ran on 4002 from `apps/store` directly.
-- `apps/dashboard/dist/` is gitignored and was left in place; it is a build artefact.
+**Two things I started are still running, deliberately, and somebody has to stop them.**
+
+- `docker` container **`mercatus-dash-gate-pg`** — postgres:18.3 on **:55432**, migrated and
+  seeded with acme + borg.
+- a **`node --import tsx apps/store/src/index.ts`** process on **:4002** (pooled, AUTH_ADAPTER=stub,
+  DATABASE_URL pointing at that container).
+
+They are still up because the storefront agent adopted them mid-run: by the time I finished,
+`/t/acme/branding`, `/t/acme/products` and `POST /t/acme/checkout` were arriving every few seconds
+from something I did not start, and killing the pair would have taken another agent's gate down
+with it. I waited five minutes for the traffic to stop and it did not. Whoever reads this next and
+finds them idle should remove them:
+
+```bash
+docker rm -f mercatus-dash-gate-pg
+kill $(ss -ltnp | grep ':4002' | grep -o 'pid=[0-9]*' | cut -d= -f2)
+```
+
+Nothing else survives: the Vite dev server on 5173 was stopped. `apps/dashboard/dist/` is a
+gitignored build artefact and was left in place.
+
+The gate used that private Postgres rather than `aspire run`, so three agents building front ends
+at once were never fighting over 4001/4002/8080 — the exact commands are in
+`lessons/07b-dashboard-spa.md`.

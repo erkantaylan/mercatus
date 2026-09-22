@@ -83,6 +83,10 @@ cd apps/store && PORT=4002 HOST=127.0.0.1 DEPLOYMENT_MODE=pooled \
   OTLP exporter has nothing to talk to.
 - A staff token is one POST and lasts 15 minutes:
   `curl -X POST :4002/dev/login/staff -H 'content-type: application/json' -d '{"slug":"acme","role":"owner"}'`.
+- **Check the log before you kill it.** A store API on 4002 is a shared resource on this machine:
+  another agent found mine and was serving its storefront gate off it within minutes
+  (`/t/acme/branding`, `POST /t/acme/checkout` from requests I did not make). `grep '"msg":"incoming
+  request"' <log> | tail` before tearing anything down.
 
 ## Driving a browser for the gate, with no download
 
